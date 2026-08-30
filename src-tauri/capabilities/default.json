@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "character-core",
+  "description": "Only the semantic commands required by the character window.",
+  "windows": ["character"],
+  "permissions": ["core:default"]
+}
+

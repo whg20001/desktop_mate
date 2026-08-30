@@ -1,0 +1,33 @@
+{
+  "id": "linguang",
+  "name": "陵光",
+  "model": "陵光-珠绣联动3.0.pmx",
+  "scale": 1,
+  "groundOffset": 0,
+  "bones": {
+    "center": "センター",
+    "upperBody": "上半身",
+    "neck": "首",
+    "head": "頭",
+    "eyes": "両目",
+    "leftEye": "左目",
+    "rightEye": "右目",
+    "leftArm": "左腕",
+    "rightArm": "右腕",
+    "leftHand": "左手首",
+    "rightHand": "右手首",
+    "leftAnkle": "左足首",
+    "rightAnkle": "右足首",
+    "leftToe": "左つま先",
+    "rightToe": "右つま先"
+  },
+  "morphs": {
+    "blink": "まばたき",
+    "smile": "笑い",
+    "a": "あ",
+    "i": "い",
+    "u": "う",
+    "e": "え",
+    "o": "お"
+  }
+}

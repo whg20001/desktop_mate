@@ -1,0 +1,31 @@
+{
+  "name": "desktop-companion",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit && vitest run",
+    "inspect:pmx": "node scripts/inspect-pmx.mjs",
+    "audit:webview": "node scripts/audit-webview.mjs",
+    "capture:webview": "node scripts/capture-webview.mjs",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@moeru/three-mmd": "^0.1.2",
+    "@moeru/three-mmd-physics-ammo": "^0.1.2",
+    "@tauri-apps/api": "^2.11.1",
+    "three": "^0.185.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/three": "^0.185.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.0.0"
+  },
+  "packageManager": "pnpm@11.22.0"
+}

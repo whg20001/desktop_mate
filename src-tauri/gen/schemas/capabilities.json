@@ -1,0 +1,1 @@
+{"character-core":{"identifier":"character-core","description":"Only the semantic commands required by the character window.","local":true,"windows":["character"],"permissions":["core:default"]}}
