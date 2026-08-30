@@ -12,5 +12,8 @@ export default defineConfig({
     target: 'chrome105',
     minify: 'oxc',
     sourcemap: false,
+    rolldownOptions: {
+      input: ['index.html', 'settings.html'],
+    },
   },
 });

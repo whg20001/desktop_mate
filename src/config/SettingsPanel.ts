@@ -7,9 +7,9 @@ import {
 
 interface SettingsPanelOptions {
   initialSettings: CharacterSettings;
-  onPreview: (settings: CharacterSettings) => void;
-  onSave: (settings: CharacterSettings) => void;
-  onVisibilityChange: (visible: boolean) => void;
+  onPreview: (settings: CharacterSettings) => void | Promise<void>;
+  onSave: (settings: CharacterSettings) => void | Promise<void>;
+  onClose: () => void | Promise<void>;
 }
 
 function requiredElement<T extends Element>(root: ParentNode, selector: string): T {
@@ -23,6 +23,7 @@ export class SettingsPanel {
   private readonly feedback: HTMLParagraphElement;
   private readonly scaleOutput: HTMLOutputElement;
   private settings: CharacterSettings;
+  private closing = false;
 
   constructor(
     private readonly element: HTMLElement,
@@ -42,23 +43,14 @@ export class SettingsPanel {
     this.writeForm();
     this.feedback.textContent = '';
     this.element.hidden = false;
-    this.options.onVisibilityChange(true);
     requiredElement<HTMLInputElement>(this.form, '[name="displayName"]').focus();
   }
 
   close(): void {
-    this.hide(true);
-  }
-
-  private hide(restoreSavedSettings: boolean): void {
-    if (this.element.hidden) return;
-    if (restoreSavedSettings) this.options.onPreview(this.settings);
-    this.element.hidden = true;
-    this.options.onVisibilityChange(false);
+    void this.finishClose(true);
   }
 
   dispose(): void {
-    this.close();
     this.element.removeEventListener('click', this.onPanelClick);
     this.form.removeEventListener('submit', this.onSubmit);
     this.form.removeEventListener('input', this.onInput);
@@ -105,17 +97,25 @@ export class SettingsPanel {
 
   private readonly onSubmit = (event: SubmitEvent): void => {
     event.preventDefault();
+    void this.submit();
+  };
+
+  private async submit(): Promise<void> {
     const parsed = this.parseForm();
     if (!parsed.success) {
       this.feedback.textContent = '配置格式无效，请检查名称、比例和 API 参数。';
       return;
     }
 
-    this.settings = parsed.data;
-    saveCharacterSettings(this.settings);
-    this.options.onSave(this.settings);
-    this.hide(false);
-  };
+    try {
+      await this.options.onSave(parsed.data);
+      this.settings = parsed.data;
+      saveCharacterSettings(this.settings);
+      await this.finishClose(false);
+    } catch {
+      this.feedback.textContent = '配置保存失败，请稍后重试。';
+    }
+  }
 
   private readonly onInput = (event: Event): void => {
     const target = event.target;
@@ -125,7 +125,7 @@ export class SettingsPanel {
     if (target instanceof HTMLInputElement && target.dataset.colorSetting !== undefined) {
       this.updateColorOutputs();
       const parsed = this.parseForm();
-      if (parsed.success) this.options.onPreview(parsed.data);
+      if (parsed.success) void this.preview(parsed.data);
     }
   };
 
@@ -153,7 +153,29 @@ export class SettingsPanel {
     }
     this.updateColorOutputs();
     const parsed = this.parseForm();
-    if (parsed.success) this.options.onPreview(parsed.data);
+    if (parsed.success) void this.preview(parsed.data);
+  }
+
+  private async preview(settings: CharacterSettings): Promise<void> {
+    try {
+      await this.options.onPreview(settings);
+    } catch {
+      this.feedback.textContent = '实时预览失败，请检查设置窗口连接。';
+    }
+  }
+
+  private async finishClose(restoreSavedSettings: boolean): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+    try {
+      if (restoreSavedSettings) {
+        await this.preview(this.settings);
+        this.writeForm();
+      }
+      await this.options.onClose();
+    } finally {
+      this.closing = false;
+    }
   }
 
   private readonly onPanelClick = (event: MouseEvent): void => {

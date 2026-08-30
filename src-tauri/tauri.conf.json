@@ -26,6 +26,23 @@
         "skipTaskbar": true,
         "focus": true,
         "visible": true
+      },
+      {
+        "label": "settings",
+        "title": "角色配置 · Windows AI 桌面伴侣",
+        "url": "settings.html",
+        "width": 560,
+        "height": 780,
+        "minWidth": 460,
+        "minHeight": 620,
+        "center": true,
+        "transparent": false,
+        "decorations": true,
+        "resizable": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "focus": false,
+        "visible": false
       }
     ],
     "security": {
@@ -34,7 +51,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "copyright": "Model rights belong to 深空之眼; non-commercial use only",
     "category": "Entertainment",
     "shortDescription": "PMX Windows desktop companion"

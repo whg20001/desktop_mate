@@ -306,3 +306,29 @@ body {
   color: #fff;
   background: #5e86b1;
 }
+
+body.settings-window {
+  min-width: 420px;
+  min-height: 620px;
+  overflow: auto;
+  touch-action: auto;
+  background: #edf2f8 !important;
+}
+
+.settings-window #settings-panel {
+  position: static;
+  display: block;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 20px;
+  background: linear-gradient(145deg, #e7edf5, #f7f9fc);
+  backdrop-filter: none;
+}
+
+.settings-window .settings-card {
+  width: min(100%, 520px);
+  max-height: none;
+  margin: 0 auto;
+  overflow: visible;
+  box-shadow: 0 18px 48px rgb(34 53 78 / 18%);
+}

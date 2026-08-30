@@ -1,1 +1,1 @@
-{"character-core":{"identifier":"character-core","description":"Only the semantic commands required by the character window.","local":true,"windows":["character"],"permissions":["core:default"]}}
+{"character-core":{"identifier":"character-core","description":"Core permissions required by the character and settings windows.","local":true,"windows":["character","settings"],"permissions":["core:default","core:window:allow-hide","core:window:allow-set-focus","core:window:allow-set-position","core:window:allow-show","core:window:allow-unminimize"]}}

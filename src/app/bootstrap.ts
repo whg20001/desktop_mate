@@ -1,6 +1,9 @@
 import { CharacterRuntime } from '../character/CharacterRuntime';
-import { loadCharacterSettings } from '../config/CharacterSettings';
-import { SettingsPanel } from '../config/SettingsPanel';
+import {
+  loadCharacterSettings,
+  saveCharacterSettings,
+} from '../config/CharacterSettings';
+import { listenForSettingsChanges, openSettingsWindow } from '../config/SettingsWindow';
 import { PointerController } from '../character/interaction/PointerController';
 import { loadModelManifest, resolveAssetUrl } from '../character/mmd/ModelManifest';
 import { DesktopBridge } from '../desktop/DesktopBridge';
@@ -43,19 +46,16 @@ export async function bootstrap(): Promise<() => void> {
     window.setTimeout(() => status.classList.add('is-hidden'), 1600);
   }
 
-  const settingsPanel = new SettingsPanel(requiredElement<HTMLElement>('#settings-panel'), {
-    initialSettings: settings,
+  const stopSettingsSync = await listenForSettingsChanges({
     onPreview(nextSettings) {
       character.applyColorSettings(nextSettings);
     },
     onSave(nextSettings) {
       settings = nextSettings;
+      saveCharacterSettings(settings);
       character.applySettings(settings);
       character.talk(1.2);
       speech.show(`${settings.displayName}：配置已保存。`);
-    },
-    onVisibilityChange(visible) {
-      void bridge.setInteractionLocked(visible);
     },
   });
   const pointer = new PointerController(
@@ -65,7 +65,12 @@ export async function bootstrap(): Promise<() => void> {
       character.reactToClick();
       speech.show(`${settings.displayName}：嗯？我在这里。`);
     },
-    () => settingsPanel.open(),
+    () => {
+      void openSettingsWindow().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : '无法打开设置窗口';
+        speech.show(`${settings.displayName}：${message}`);
+      });
+    },
   );
   pointer.attach();
 
@@ -81,7 +86,7 @@ export async function bootstrap(): Promise<() => void> {
   return () => {
     window.removeEventListener('resize', onResize);
     pointer.detach();
-    settingsPanel.dispose();
+    stopSettingsSync();
     loop.stop();
     character.dispose();
     renderer.dispose();

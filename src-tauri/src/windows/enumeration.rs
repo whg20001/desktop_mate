@@ -22,6 +22,7 @@ pub fn enumerate_windows(companion_title: &str) -> AppResult<Vec<DesktopWindow>>
     let mut context = EnumerationContext {
         windows: Vec::new(),
         companion_title: companion_title.to_owned(),
+        own_process_id: std::process::id(),
     };
     let parameter = LPARAM((&mut context as *mut EnumerationContext) as isize);
     unsafe { EnumWindows(Some(enum_window), parameter) }
@@ -37,17 +38,22 @@ pub fn foreground_window() -> Option<isize> {
 struct EnumerationContext {
     windows: Vec<DesktopWindow>,
     companion_title: String,
+    own_process_id: u32,
 }
 
 unsafe extern "system" fn enum_window(hwnd: HWND, parameter: LPARAM) -> BOOL {
     let context = &mut *(parameter.0 as *mut EnumerationContext);
-    if let Some(window) = read_window(hwnd, &context.companion_title) {
+    if let Some(window) = read_window(hwnd, &context.companion_title, context.own_process_id) {
         context.windows.push(window);
     }
     BOOL(1)
 }
 
-unsafe fn read_window(hwnd: HWND, companion_title: &str) -> Option<DesktopWindow> {
+unsafe fn read_window(
+    hwnd: HWND,
+    companion_title: &str,
+    own_process_id: u32,
+) -> Option<DesktopWindow> {
     if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
         return None;
     }
@@ -77,6 +83,9 @@ unsafe fn read_window(hwnd: HWND, companion_title: &str) -> Option<DesktopWindow
 
     let mut process_id = 0_u32;
     GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    if process_id == own_process_id {
+        return None;
+    }
     Some(DesktopWindow {
         hwnd: hwnd.0 as isize,
         process_id,
