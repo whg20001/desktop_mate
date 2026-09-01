@@ -1,12 +1,12 @@
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { monitorFromPoint, PhysicalPosition } from '@tauri-apps/api/window';
+import { z } from 'zod';
 import { characterSettingsSchema, type CharacterSettings } from './CharacterSettings';
 
 const SETTINGS_WINDOW_LABEL = 'settings';
 const MESSAGE_SOURCE = 'desktop-companion-settings';
-const PREVIEW_EVENT = 'settings://preview';
-const SAVED_EVENT = 'settings://saved';
+const SETTINGS_CHANGE_EVENT = 'settings://change';
 const WINDOW_GAP = 20;
 
 interface Rect {
@@ -18,14 +18,17 @@ interface Rect {
 
 interface SettingsHandlers {
   onPreview: (settings: CharacterSettings) => void;
+  onVoicePreview: (settings: CharacterSettings) => void;
   onSave: (settings: CharacterSettings) => void;
 }
 
-type BrowserSettingsMessage = {
-  source: typeof MESSAGE_SOURCE;
-  event: 'preview' | 'saved';
-  settings: unknown;
-};
+const settingsChangeSchema = z.object({
+  event: z.enum(['preview', 'voice-preview', 'saved']),
+  settings: characterSettingsSchema,
+});
+
+type SettingsChange = z.infer<typeof settingsChangeSchema>;
+type BrowserSettingsMessage = SettingsChange & { source: typeof MESSAGE_SOURCE };
 
 function isTauri(): boolean {
   return '__TAURI_INTERNALS__' in window;
@@ -117,11 +120,15 @@ export async function hideSettingsWindow(): Promise<void> {
 }
 
 export async function sendSettingsChange(
-  event: 'preview' | 'saved',
+  event: SettingsChange['event'],
   settings: CharacterSettings,
 ): Promise<void> {
   if (isTauri()) {
-    await emitTo('character', event === 'preview' ? PREVIEW_EVENT : SAVED_EVENT, settings);
+    await emitTo(
+      'character',
+      SETTINGS_CHANGE_EVENT,
+      { event, settings } satisfies SettingsChange,
+    );
     return;
   }
   window.opener?.postMessage(
@@ -130,27 +137,26 @@ export async function sendSettingsChange(
   );
 }
 
+function applySettingsChange(change: unknown, handlers: SettingsHandlers): void {
+  const parsed = settingsChangeSchema.safeParse(change);
+  if (!parsed.success) return;
+  if (parsed.data.event === 'preview') handlers.onPreview(parsed.data.settings);
+  if (parsed.data.event === 'voice-preview') handlers.onVoicePreview(parsed.data.settings);
+  if (parsed.data.event === 'saved') handlers.onSave(parsed.data.settings);
+}
+
 export async function listenForSettingsChanges(
   handlers: SettingsHandlers,
 ): Promise<UnlistenFn> {
   if (isTauri()) {
-    const apply = (handler: (settings: CharacterSettings) => void, payload: unknown): void => {
-      const parsed = characterSettingsSchema.safeParse(payload);
-      if (parsed.success) handler(parsed.data);
-    };
-    const unlisten = await Promise.all([
-      listen<unknown>(PREVIEW_EVENT, (event) => apply(handlers.onPreview, event.payload)),
-      listen<unknown>(SAVED_EVENT, (event) => apply(handlers.onSave, event.payload)),
-    ]);
-    return () => unlisten.forEach((dispose) => dispose());
+    return listen<unknown>(SETTINGS_CHANGE_EVENT, (event) => {
+      applySettingsChange(event.payload, handlers);
+    });
   }
 
   const onMessage = (event: MessageEvent<BrowserSettingsMessage>): void => {
     if (event.origin !== window.location.origin || event.data?.source !== MESSAGE_SOURCE) return;
-    const parsed = characterSettingsSchema.safeParse(event.data.settings);
-    if (!parsed.success) return;
-    if (event.data.event === 'preview') handlers.onPreview(parsed.data);
-    if (event.data.event === 'saved') handlers.onSave(parsed.data);
+    applySettingsChange(event.data, handlers);
   };
   window.addEventListener('message', onMessage);
   return () => window.removeEventListener('message', onMessage);

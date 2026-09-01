@@ -61,10 +61,6 @@ export class DesktopBridge {
     if (DesktopBridge.isTauri()) await commands.endDrag();
   }
 
-  async setInteractionLocked(locked: boolean): Promise<void> {
-    if (DesktopBridge.isTauri()) await commands.setInteractionLocked(locked);
-  }
-
   async getDesktopWorld(): Promise<DesktopWorld | undefined> {
     if (!DesktopBridge.isTauri()) return undefined;
     return desktopWorldSchema.parse(await commands.getDesktopWorld());
@@ -76,4 +72,3 @@ export class DesktopBridge {
     this.stateListeners.clear();
   }
 }
-

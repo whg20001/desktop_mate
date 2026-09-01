@@ -5,15 +5,14 @@ mod desktop;
 pub mod error;
 pub mod memory;
 mod runtime;
+pub mod speech;
 pub mod vision;
 mod windows;
 
 use tauri::Manager;
 
 use commands::{
-    character::{
-        begin_drag, end_drag, get_character_state, set_interaction_locked, update_hit_regions,
-    },
+    character::{begin_drag, end_drag, update_hit_regions},
     desktop::get_desktop_world,
 };
 
@@ -27,9 +26,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             begin_drag,
             end_drag,
-            set_interaction_locked,
             update_hit_regions,
-            get_character_state,
             get_desktop_world,
         ])
         .run(tauri::generate_context!())

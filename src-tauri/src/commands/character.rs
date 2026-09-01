@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::{
-    character::state::CharacterState,
     error::AppResult,
     runtime::{HitRegionPayload, RuntimeState},
 };
@@ -24,14 +23,4 @@ pub fn begin_drag(state: State<'_, Arc<RuntimeState>>) -> AppResult<()> {
 #[tauri::command]
 pub fn end_drag(state: State<'_, Arc<RuntimeState>>) {
     state.end_drag();
-}
-
-#[tauri::command]
-pub fn set_interaction_locked(locked: bool, state: State<'_, Arc<RuntimeState>>) {
-    state.set_interaction_locked(locked);
-}
-
-#[tauri::command]
-pub fn get_character_state(state: State<'_, Arc<RuntimeState>>) -> CharacterState {
-    state.character.lock().clone()
 }

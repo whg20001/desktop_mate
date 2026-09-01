@@ -83,7 +83,6 @@ pub struct RuntimeState {
     hit_regions: RwLock<Vec<HitRegion>>,
     scale_factor: RwLock<f32>,
     cursor_ignored: AtomicBool,
-    interaction_locked: AtomicBool,
     shutdown: AtomicBool,
 }
 
@@ -95,7 +94,6 @@ impl RuntimeState {
             hit_regions: RwLock::new(Vec::new()),
             scale_factor: RwLock::new(scale_factor.max(0.25)),
             cursor_ignored: AtomicBool::new(false),
-            interaction_locked: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         }
     }
@@ -139,10 +137,6 @@ impl RuntimeState {
         character.grab_offset_x = cursor.x as f32 - character.x;
         character.grab_offset_y = cursor.y as f32 - character.y;
         Ok(())
-    }
-
-    pub fn set_interaction_locked(&self, locked: bool) {
-        self.interaction_locked.store(locked, Ordering::Release);
     }
 
     pub fn end_drag(&self) {
@@ -223,9 +217,7 @@ fn runtime_loop(window: WebviewWindow, state: Arc<RuntimeState>) {
 
             let local_x = (cursor_position.x as f32 - character.x) / scale_factor;
             let local_y = (cursor_position.y as f32 - character.y) / scale_factor;
-            let inside = state.interaction_locked.load(Ordering::Acquire)
-                || character.grabbed
-                || state.hit_test(local_x, local_y);
+            let inside = character.grabbed || state.hit_test(local_x, local_y);
             drop(character);
 
             update_click_through(&window, &state, !inside);

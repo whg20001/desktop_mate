@@ -9,6 +9,9 @@ import { loadModelManifest, resolveAssetUrl } from '../character/mmd/ModelManife
 import { DesktopBridge } from '../desktop/DesktopBridge';
 import { CharacterRenderer } from '../renderer/CharacterRenderer';
 import { RenderLoop } from '../renderer/RenderLoop';
+import { SpeechController } from '../speech/SpeechController';
+import { WebSpeechEngine } from '../speech/WebSpeechEngine';
+import type { SpeechSource } from '../speech/SpeechTypes';
 import { SpeechBubble } from '../ui/SpeechBubble';
 
 const MANIFEST_URL = '/LinGuang/manifest.json';
@@ -36,6 +39,21 @@ export async function bootstrap(): Promise<() => void> {
   const character = new CharacterRuntime(renderer, bridge, manifest);
   const report = await character.load(resolveAssetUrl(MANIFEST_URL, manifest.model));
   character.applySettings(settings);
+  const voice = new SpeechController(new WebSpeechEngine(), character);
+  const speakWithSettings = (
+    text: string,
+    source: SpeechSource,
+    speechSettings = settings,
+  ): Promise<void> =>
+    voice.speak({
+      text,
+      source,
+      voiceId: speechSettings.speechVoiceId || undefined,
+      language: speechSettings.speechLanguage,
+      rate: speechSettings.speechRate,
+      pitch: speechSettings.speechPitch,
+      volume: speechSettings.speechVolume,
+    });
 
   const missingCore = !report.bones.head || !report.morphs.blink;
   if (missingCore || report.warnings.length > 0) {
@@ -50,8 +68,22 @@ export async function bootstrap(): Promise<() => void> {
     onPreview(nextSettings) {
       character.applyColorSettings(nextSettings);
     },
+    onVoicePreview(nextSettings) {
+      const message = '你好，这是当前的声音配置。';
+      if (!nextSettings.speechEnabled) {
+        speech.show(nextSettings.displayName + '：角色语音当前已关闭。');
+        return;
+      }
+      speech.show(nextSettings.displayName + '：' + message);
+      void speakWithSettings(message, 'system', nextSettings).catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : '未知错误';
+        speech.show(nextSettings.displayName + '：语音试听失败。');
+        console.warn('[speech preview]', detail);
+      });
+    },
     onSave(nextSettings) {
       settings = nextSettings;
+      if (!settings.speechEnabled) voice.cancel();
       saveCharacterSettings(settings);
       character.applySettings(settings);
       character.talk(1.2);
@@ -62,8 +94,15 @@ export async function bootstrap(): Promise<() => void> {
     canvas,
     bridge,
     () => {
+      const message = '嗯？我在这里。';
       character.reactToClick();
-      speech.show(`${settings.displayName}：嗯？我在这里。`);
+      speech.show(settings.displayName + '：' + message);
+      if (settings.speechEnabled) {
+        void speakWithSettings(message, 'interaction').catch((error: unknown) => {
+          character.talk(1.6);
+          console.warn('[speech]', error);
+        });
+      }
     },
     () => {
       void openSettingsWindow().catch((error: unknown) => {
@@ -87,10 +126,10 @@ export async function bootstrap(): Promise<() => void> {
     window.removeEventListener('resize', onResize);
     pointer.detach();
     stopSettingsSync();
+    voice.dispose();
     loop.stop();
     character.dispose();
     renderer.dispose();
     bridge.dispose();
   };
 }
-

@@ -182,7 +182,8 @@ body {
 
 #settings-form input[type="text"],
 #settings-form input[type="url"],
-#settings-form input:not([type]) {
+#settings-form input:not([type]),
+#settings-form select {
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid #cdd9e7;
@@ -193,10 +194,18 @@ body {
   font: inherit;
 }
 
-#settings-form input:focus {
+#settings-form input:focus,
+#settings-form select:focus {
   border-color: #769bc8;
   box-shadow: 0 0 0 3px rgb(118 155 200 / 16%);
 }
+#settings-form input:disabled,
+#settings-form select:disabled,
+#settings-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 
 .color-controls {
   background: linear-gradient(145deg, rgb(242 247 253 / 88%), rgb(250 245 247 / 80%));
@@ -226,7 +235,8 @@ body {
   cursor: pointer;
 }
 
-.color-control small {
+.color-control small,
+.speech-controls small {
   color: #8491a2;
   font-size: 10px;
   line-height: 1.4;
@@ -253,6 +263,39 @@ body {
   font: inherit;
   font-size: 11px;
   cursor: pointer;
+}
+
+.speech-controls {
+  background: linear-gradient(145deg, rgb(241 247 255 / 92%), rgb(246 243 255 / 82%));
+}
+
+.speech-controls-footer {
+  display: grid;
+  gap: 10px;
+}
+
+.speech-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-utility-button {
+  padding: 7px 11px;
+  border: 1px solid #c8d5e3;
+  border-radius: 9px;
+  color: #536982;
+  background: rgb(255 255 255 / 82%);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.settings-utility-button[data-preview-voice] {
+  border-color: #7f9fc2;
+  color: #315b88;
+  background: #eef5fd;
 }
 
 .toggle-row {

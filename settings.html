@@ -65,6 +65,65 @@
               <button type="button" class="color-reset-button" data-reset-colors>恢复推荐色彩</button>
             </div>
           </fieldset>
+          <fieldset class="speech-controls">
+            <legend>声音设置</legend>
+            <label class="toggle-row">
+              <input name="speechEnabled" data-speech-setting type="checkbox" />
+              <span>启用角色语音</span>
+            </label>
+            <label>
+              <span>系统音色</span>
+              <select name="speechVoiceId" data-speech-control>
+                <option value="">跟随系统默认</option>
+              </select>
+              <small>音色来自 Windows WebView2 可用的系统语音。</small>
+            </label>
+            <label>
+              <span>语言</span>
+              <input
+                name="speechLanguage"
+                data-speech-control
+                list="speech-language-options"
+                maxlength="35"
+                placeholder="zh-CN"
+                autocomplete="off"
+              />
+              <datalist id="speech-language-options">
+                <option value="zh-CN"></option>
+                <option value="zh-TW"></option>
+                <option value="ja-JP"></option>
+                <option value="en-US"></option>
+              </datalist>
+            </label>
+            <label class="speech-control">
+              <span class="range-heading">
+                <span>音量</span>
+                <output data-value-for="speechVolume">1.00</output>
+              </span>
+              <input name="speechVolume" data-speech-setting data-speech-control type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label class="speech-control">
+              <span class="range-heading">
+                <span>语速</span>
+                <output data-value-for="speechRate">1.00</output>
+              </span>
+              <input name="speechRate" data-speech-setting data-speech-control type="range" min="0.5" max="2" step="0.05" />
+            </label>
+            <label class="speech-control">
+              <span class="range-heading">
+                <span>音调</span>
+                <output data-value-for="speechPitch">1.00</output>
+              </span>
+              <input name="speechPitch" data-speech-setting data-speech-control type="range" min="0" max="2" step="0.05" />
+            </label>
+            <div class="speech-controls-footer">
+              <p class="settings-note">试听不会保存配置；点击“保存配置”后用于角色问候和后续 AI 语音。</p>
+              <div class="speech-actions">
+                <button type="button" class="settings-utility-button" data-reset-speech>恢复默认</button>
+                <button type="button" class="settings-utility-button" data-preview-voice>试听声音</button>
+              </div>
+            </div>
+          </fieldset>
           <fieldset>
             <legend>API 预设</legend>
             <label>

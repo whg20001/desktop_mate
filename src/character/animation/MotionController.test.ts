@@ -140,4 +140,27 @@ describe('MotionController', () => {
     expect(Math.max(...(['a', 'i', 'u', 'e', 'o'] as const).map((morph) => runtime.morphs.get(morph) ?? 0))).toBe(0);
     expect(runtime.morphs.get('smile')).toBeCloseTo(0, 3);
   });
+
+  it('uses speech level and viseme frames before returning the mouth to neutral', () => {
+    const runtime = new RuntimeStub();
+    const controller = new MotionController(runtime, () => 0.5);
+    controller.attach();
+    controller.setSpeechFrame({ active: true, level: 0.8, viseme: 'i' });
+
+    advance(controller, 0.25);
+
+    expect(runtime.morphs.get('i')).toBeGreaterThan(0.4);
+    expect(runtime.morphs.get('a')).toBe(0);
+
+    controller.setSpeechFrame({ active: false, level: 0 });
+    advance(controller, 0.5);
+
+    expect(
+      Math.max(
+        ...(['a', 'i', 'u', 'e', 'o'] as const).map(
+          (morph) => runtime.morphs.get(morph) ?? 0,
+        ),
+      ),
+    ).toBe(0);
+  });
 });

@@ -480,7 +480,6 @@ desktop-companion/
 │   │   │
 │   │   ├── CharacterRuntime.ts
 │   │   ├── CharacterController.ts
-│   │   ├── CharacterState.ts
 │   │
 │   │   ├── mmd/
 │   │   │   ├── MmdRuntime.ts
@@ -502,7 +501,6 @@ desktop-companion/
 │
 │   ├── desktop/
 │   │   ├── DesktopBridge.ts
-│   │   └── DesktopTypes.ts
 │
 │   ├── ipc/
 │   │   ├── commands.ts
@@ -513,6 +511,11 @@ desktop-companion/
 │   │   ├── SpeechBubble.ts
 │   │   ├── ContextMenu.ts
 │   │   └── SettingsPanel.ts        // Provider 配置界面（不持有密钥，只调用 command）
+│
+│   ├── speech/
+│   │   ├── SpeechTypes.ts          // Engine / STT / 动作帧契约
+│   │   ├── SpeechController.ts     // 播放生命周期与打断所有权
+│   │   └── WebSpeechEngine.ts      // 无密钥本地调试适配器
 │
 │   ├── intelligence/
 │   │   │
@@ -594,6 +597,10 @@ desktop-companion/
 │   │   │   └── providers/
 │   │   │       ├── mod.rs
 │   │   │       └── multimodal_agent.rs
+│   │
+│   │   ├── speech/
+│   │   │   ├── mod.rs
+│   │   │   └── provider.rs         // TtsProvider / SttProvider + 音频与 viseme 契约
 │   │
 │   │   ├── models/
 │   │   │   ├── mod.rs

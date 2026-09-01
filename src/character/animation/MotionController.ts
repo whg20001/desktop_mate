@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { CharacterState } from '../../ipc/schemas';
+import type { SpeechMotionFrame } from '../../speech/SpeechTypes';
 import type { CharacterBoneRole } from '../mmd/BoneMap';
 import type { CharacterMorphRole } from '../mmd/MorphMap';
 import type { MmdRuntime } from '../mmd/MmdRuntime';
@@ -22,6 +23,7 @@ export class MotionController {
   private greetingElapsed = GREETING_SECONDS;
   private landingElapsed = LANDING_SECONDS;
   private talkingRemaining = 0;
+  private speechFrame: SpeechMotionFrame = { active: false, level: 0 };
   private mouthWeight = 0;
   private smileWeight = 0;
   private breathingEnabled = false;
@@ -57,6 +59,7 @@ export class MotionController {
     this.greetingElapsed = GREETING_SECONDS;
     this.landingElapsed = LANDING_SECONDS;
     this.talkingRemaining = 0;
+    this.speechFrame = { active: false, level: 0 };
     this.mouthWeight = 0;
     this.smileWeight = 0;
     this.idleHeadTilt = 0;
@@ -88,6 +91,14 @@ export class MotionController {
       this.talkingRemaining,
       THREE.MathUtils.clamp(durationSeconds, 0.1, 30),
     );
+  }
+
+  setSpeechFrame(frame: SpeechMotionFrame): void {
+    this.speechFrame = {
+      active: frame.active,
+      level: THREE.MathUtils.clamp(frame.level, 0, 1),
+      ...(frame.viseme ? { viseme: frame.viseme } : {}),
+    };
   }
 
   setBreathingEnabled(enabled: boolean): void {
@@ -174,13 +185,16 @@ export class MotionController {
       rightArmZ -= THREE.MathUtils.degToRad(8) * landingWeight;
     }
 
-    const talking = this.talkingRemaining > 0;
+    const talking = this.talkingRemaining > 0 || this.speechFrame.active;
     if (talking) {
       const syllable = 0.5 + Math.sin(this.elapsed * Math.PI * 9) * 0.5;
+      const mouthTarget = this.speechFrame.active
+        ? this.speechFrame.level * 0.65
+        : 0.08 + syllable * 0.3;
       neckX += THREE.MathUtils.degToRad(0.65) * Math.sin(this.elapsed * Math.PI * 2.6);
       this.mouthWeight = THREE.MathUtils.lerp(
         this.mouthWeight,
-        0.08 + syllable * 0.3,
+        mouthTarget,
         1 - Math.exp(-step * 18),
       );
     } else {
@@ -212,7 +226,9 @@ export class MotionController {
     this.applyRotation(this.rightArm, 'z', rightArmZ, smoothing);
     this.applyRotation(this.rightHand, 'z', rightHandZ, smoothing);
 
-    const activeMouth = Math.floor(this.elapsed * 7) % MOUTH_MORPHS.length;
+    const activeMouth = this.speechFrame.active && this.speechFrame.viseme
+      ? MOUTH_MORPHS.indexOf(this.speechFrame.viseme)
+      : Math.floor(this.elapsed * 7) % MOUTH_MORPHS.length;
     MOUTH_MORPHS.forEach((morph, index) => {
       this.runtime.setMorph(morph, talking && index === activeMouth ? this.mouthWeight : 0);
     });

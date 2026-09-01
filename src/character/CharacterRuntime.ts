@@ -1,6 +1,7 @@
 import type { CharacterSettings } from '../config/CharacterSettings';
 import type { DesktopBridge } from '../desktop/DesktopBridge';
 import type { CharacterRenderer } from '../renderer/CharacterRenderer';
+import type { SpeechMotionFrame, SpeechMotionTarget } from '../speech/SpeechTypes';
 import { BlinkController } from './animation/BlinkController';
 import { LookAtController } from './animation/LookAtController';
 import { MotionController } from './animation/MotionController';
@@ -9,7 +10,7 @@ import { MoeruMmdRuntime } from './mmd/MoeruMmdRuntime';
 import type { PMXCompatibilityReport } from './mmd/MmdRuntime';
 import type { ModelManifest } from './mmd/ModelManifest';
 
-export class CharacterRuntime {
+export class CharacterRuntime implements SpeechMotionTarget {
   private readonly mmd: MoeruMmdRuntime;
   private readonly blink: BlinkController;
   private readonly motion: MotionController;
@@ -78,11 +79,14 @@ export class CharacterRuntime {
 
   reactToClick(): void {
     this.motion.greet();
-    this.motion.talk(1.6);
   }
 
   talk(durationSeconds = 2.2): void {
     this.motion.talk(durationSeconds);
+  }
+
+  setSpeechFrame(frame: SpeechMotionFrame): void {
+    this.motion.setSpeechFrame(frame);
   }
 
   resize(): void {

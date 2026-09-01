@@ -15,6 +15,9 @@ const panel = new SettingsPanel(requiredElement<HTMLElement>('#settings-panel'),
   onPreview(settings) {
     return sendSettingsChange('preview', settings);
   },
+  onVoicePreview(settings) {
+    return sendSettingsChange('voice-preview', settings);
+  },
   onSave(settings) {
     return sendSettingsChange('saved', settings);
   },
