@@ -34,11 +34,9 @@ class MemoryPort(Protocol):
     def close(self) -> None: ...
     def search(self, query: str, scope: dict[str, str], limit: int) -> list[dict[str, Any]]: ...
     def remember_turn(self, messages: list[dict[str, str]], scope: dict[str, str], turn_id: str) -> None: ...
-    def add_entry(self, entry: dict[str, Any]) -> str: ...
     def list(self, scope: dict[str, str]) -> list[dict[str, Any]]: ...
     def update(self, memory_id: str, content: str, scope: dict[str, str]) -> None: ...
     def delete(self, memory_id: str, scope: dict[str, str]) -> None: ...
-    def clear(self, scope: dict[str, str]) -> None: ...
 
 
 class DisabledMemory:
@@ -51,9 +49,6 @@ class DisabledMemory:
     def remember_turn(self, messages: list[dict[str, str]], scope: dict[str, str], turn_id: str) -> None:
         return None
 
-    def add_entry(self, entry: dict[str, Any]) -> str:
-        raise RuntimeError("long-term memory is disabled")
-
     def list(self, scope: dict[str, str]) -> list[dict[str, Any]]:
         return []
 
@@ -62,9 +57,6 @@ class DisabledMemory:
 
     def delete(self, memory_id: str, scope: dict[str, str]) -> None:
         raise RuntimeError("long-term memory is disabled")
-
-    def clear(self, scope: dict[str, str]) -> None:
-        return None
 
     def close(self) -> None:
         return None
@@ -157,35 +149,6 @@ class Mem0Memory:
                 **_filters(scope),
             )
 
-    def add_entry(self, entry: dict[str, Any]) -> str:
-        scope = entry["scope"]
-        content = str(entry["content"]).strip()
-        if not content or contains_sensitive(content):
-            raise ValueError("memory content is empty or sensitive")
-        metadata = dict(entry.get("metadata") or {})
-        metadata.update(
-            {
-                "kind": entry.get("kind", "semantic"),
-                "importance": entry.get("importance", 0.5),
-                "tags": entry.get("tags", []),
-                "occurredAtUnixMs": entry.get("occurredAtUnixMs"),
-                "createdAtUnixMs": entry.get("createdAtUnixMs"),
-                "sourceEventIds": entry.get("sourceEventIds", []),
-                "scope": {
-                    "userId": scope["userId"],
-                    "characterId": scope["characterId"],
-                    "sessionId": None,
-                },
-                "originSessionId": scope.get("sessionId"),
-                "localOnly": True,
-            }
-        )
-        with self._lock:
-            result = self._require().add(
-                content, infer=False, metadata=metadata, **_filters(scope)
-            )
-        return _result_id(result)
-
     def list(self, scope: dict[str, str]) -> list[dict[str, Any]]:
         with self._lock:
             result = self._require().get_all(**_filters(scope))
@@ -205,10 +168,6 @@ class Mem0Memory:
         with self._lock:
             self._require_scope(memory_id, scope)
             self._require().delete(memory_id=memory_id)
-
-    def clear(self, scope: dict[str, str]) -> None:
-        with self._lock:
-            self._require().delete_all(**_filters(scope))
 
     def close(self) -> None:
         if self._memory is None:
@@ -260,17 +219,6 @@ def _filters(scope: dict[str, str]) -> dict[str, str]:
         "user_id": scope["userId"],
         "agent_id": scope["characterId"],
     }
-
-
-def _result_id(result: Any) -> str:
-    values = result.get("results", result) if isinstance(result, dict) else result
-    if isinstance(values, list) and values:
-        value = values[0]
-        if isinstance(value, dict) and isinstance(value.get("id"), str):
-            return value["id"]
-    if isinstance(result, dict) and isinstance(result.get("id"), str):
-        return result["id"]
-    raise RuntimeError("Mem0 did not return a memory id")
 
 
 def _normalize_record(value: dict[str, Any]) -> dict[str, Any]:

@@ -41,7 +41,7 @@ class FailingConversationLlm(FakeLlm):
 
 
 class ServerTests(unittest.TestCase):
-    def test_health_requires_token_and_conversation_is_available(self) -> None:
+    def test_readiness_requires_token_and_conversation_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = SidecarConfig(

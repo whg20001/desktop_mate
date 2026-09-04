@@ -106,7 +106,7 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/live":
             self._json(HTTPStatus.OK, {"status": "alive", "version": __version__})
             return
-        if self.path in {"/ready", "/health"}:
+        if self.path == "/ready":
             status, body = self.server.application.health()
             self._json(status, body)
             return
@@ -125,31 +125,12 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                 if orchestrator is None:
                     raise RuntimeError("local LLM is not configured")
                 self._json(HTTPStatus.OK, orchestrator.converse(body))
-            elif self.path == "/v1/memories":
-                entry = body.get("entry")
-                if not isinstance(entry, dict):
-                    raise ValueError("entry is required")
-                self._json(HTTPStatus.OK, {"id": self.server.application.memory.add_entry(entry)})
             elif self.path == "/v1/memories/list":
                 scope = validate_scope(body.get("scope"))
                 self._json(
                     HTTPStatus.OK,
                     {"records": self.server.application.memory.list(scope)},
                 )
-            elif self.path == "/v1/memories/search":
-                scope = validate_scope(_sidecar_scope(body.get("scope")))
-                records = self.server.application.memory.search(
-                    str(body.get("text", "")),
-                    scope,
-                    max(1, min(int(body.get("topK", 6)), 100)),
-                )
-                self._json(
-                    HTTPStatus.OK,
-                    {"records": [_provider_record(item, body["scope"]) for item in records]},
-                )
-            elif self.path == "/v1/memories/clear":
-                self.server.application.memory.clear(validate_scope(_sidecar_scope(body)))
-                self._json(HTTPStatus.OK, {"status": "cleared"})
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "route not found"})
         except (ValueError, RuntimeError) as error:
@@ -260,30 +241,3 @@ def _embedding_health(config: SidecarConfig) -> tuple[bool, str]:
         return True, "local embedding provider is reachable"
     except RuntimeError as error:
         return False, str(error)
-
-
-def _sidecar_scope(scope: Any) -> dict[str, Any]:
-    if not isinstance(scope, dict):
-        raise ValueError("scope is required")
-    copy = dict(scope)
-    copy["sessionId"] = copy.get("sessionId") or "global"
-    return copy
-
-
-def _provider_record(record: dict[str, Any], scope: dict[str, Any]) -> dict[str, Any]:
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    stored_scope = metadata.get("scope") if isinstance(metadata.get("scope"), dict) else scope
-    return {
-        "entry": {
-            "scope": stored_scope,
-            "kind": metadata.get("kind", "semantic"),
-            "content": record["content"],
-            "importance": metadata.get("importance", record.get("score", 0.5)),
-            "tags": metadata.get("tags", []),
-            "occurredAtUnixMs": metadata.get("occurredAtUnixMs"),
-            "createdAtUnixMs": metadata.get("createdAtUnixMs", 0),
-            "sourceEventIds": metadata.get("sourceEventIds", []),
-            "metadata": metadata,
-        },
-        "score": record.get("score", 1.0),
-    }

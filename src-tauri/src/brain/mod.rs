@@ -1,4 +1,5 @@
 pub mod client;
+pub mod locality;
 pub mod model;
 pub mod supervisor;
 

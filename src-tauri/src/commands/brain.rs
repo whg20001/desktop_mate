@@ -32,11 +32,6 @@ pub fn configure_brain(
 }
 
 #[tauri::command]
-pub fn restart_brain(state: State<'_, Arc<BrainSupervisor>>) -> CommandResult<()> {
-    state.restart()
-}
-
-#[tauri::command]
 pub async fn converse(
     request: ConversationRequest,
     state: State<'_, Arc<BrainSupervisor>>,

@@ -3,9 +3,10 @@ use std::time::Duration;
 use reqwest::{header::HeaderValue, Client, Method};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::memory::locality::LocalEndpoint;
-
-use super::model::{BrainMemory, CharacterResponse, ConversationPayload, ConversationScope};
+use super::{
+    locality::LocalEndpoint,
+    model::{BrainMemory, CharacterResponse, ConversationPayload, ConversationScope},
+};
 
 pub struct BrainClient {
     endpoint: LocalEndpoint,
@@ -98,10 +99,6 @@ impl BrainClient {
             )
             .await?;
         Ok(())
-    }
-
-    pub async fn status(&self) -> Result<serde_json::Value, String> {
-        self.request::<(), _>(Method::GET, "ready", None).await
     }
 
     async fn request<B: Serialize + ?Sized, T: DeserializeOwned>(

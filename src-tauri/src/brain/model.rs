@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ai::provider::AvailableAction;
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BrainPhase {
@@ -112,6 +110,15 @@ pub struct ConversationScope {
     pub user_id: String,
     pub character_id: String,
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableAction {
+    pub id: String,
+    pub description: String,
+    #[serde(default)]
+    pub scenes: Vec<String>,
 }
 
 impl ConversationScope {

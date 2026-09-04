@@ -13,10 +13,9 @@ use parking_lot::{Mutex, RwLock};
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::memory::locality::LocalEndpoint;
-
 use super::{
     client::BrainClient,
+    locality::LocalEndpoint,
     model::{BrainPhase, BrainSettings, BrainStatus},
 };
 
@@ -150,15 +149,6 @@ impl BrainSupervisor {
             .read()
             .clone()
             .ok_or_else(|| "brain client is unavailable".to_string())
-    }
-
-    pub fn restart(&self) -> Result<(), String> {
-        self.control
-            .lock()
-            .as_ref()
-            .ok_or_else(|| "brain supervisor is stopped".to_string())?
-            .send(Control::Restart)
-            .map_err(|_| "brain supervisor is stopped".to_string())
     }
 
     pub fn shutdown(&self) {

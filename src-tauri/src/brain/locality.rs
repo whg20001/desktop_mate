@@ -6,8 +6,6 @@ use std::{
 use reqwest::{redirect::Policy, Client, Response};
 use url::{Host, Url};
 
-use super::provider::{MemoryError, MemoryResult};
-
 #[derive(Clone, Debug)]
 pub struct LocalEndpoint {
     url: Url,
@@ -15,30 +13,21 @@ pub struct LocalEndpoint {
 }
 
 impl LocalEndpoint {
-    pub fn parse(value: &str) -> MemoryResult<Self> {
-        let mut url = Url::parse(value)
-            .map_err(|error| MemoryError::InvalidEndpoint(format!("invalid URL: {error}")))?;
-
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let mut url = Url::parse(value).map_err(|error| format!("invalid URL: {error}"))?;
         if url.scheme() != "http" {
-            return Err(MemoryError::InvalidEndpoint(
-                "local memory endpoints must use plain HTTP over loopback".into(),
-            ));
+            return Err("local endpoints must use plain HTTP over loopback".into());
         }
         if !url.username().is_empty() || url.password().is_some() {
-            return Err(MemoryError::InvalidEndpoint(
-                "credentials are not allowed in a memory endpoint URL".into(),
-            ));
+            return Err("credentials are not allowed in a local endpoint URL".into());
         }
         if url.query().is_some() || url.fragment().is_some() {
-            return Err(MemoryError::InvalidEndpoint(
-                "query strings and fragments are not allowed in a memory endpoint".into(),
-            ));
+            return Err("query strings and fragments are not allowed in a local endpoint".into());
         }
 
         let resolved_addresses = resolve_loopback_addresses(&url)?;
         if !url.path().ends_with('/') {
-            let path = format!("{}/", url.path());
-            url.set_path(&path);
+            url.set_path(&format!("{}/", url.path()));
         }
         Ok(Self {
             url,
@@ -46,20 +35,16 @@ impl LocalEndpoint {
         })
     }
 
-    pub fn join(&self, relative: &str) -> MemoryResult<Url> {
+    pub fn join(&self, relative: &str) -> Result<Url, String> {
         let url = self
             .url
             .join(relative.trim_start_matches('/'))
-            .map_err(|error| MemoryError::InvalidEndpoint(error.to_string()))?;
+            .map_err(|error| error.to_string())?;
         resolve_loopback_addresses(&url)?;
         Ok(url)
     }
 
-    pub fn http_client(&self) -> MemoryResult<Client> {
-        self.http_client_with_timeout(Duration::from_secs(8))
-    }
-
-    pub fn http_client_with_timeout(&self, timeout: Duration) -> MemoryResult<Client> {
+    pub fn http_client_with_timeout(&self, timeout: Duration) -> Result<Client, String> {
         let mut builder = Client::builder()
             .no_proxy()
             .redirect(Policy::none())
@@ -68,26 +53,22 @@ impl LocalEndpoint {
         if matches!(self.url.host(), Some(Host::Domain(_))) {
             builder = builder.resolve_to_addrs("localhost", &self.resolved_addresses);
         }
-        builder
-            .build()
-            .map_err(|error| MemoryError::Transport(error.to_string()))
+        builder.build().map_err(|error| error.to_string())
     }
 
-    pub fn validate_response(&self, response: &Response) -> MemoryResult<()> {
+    pub fn validate_response(&self, response: &Response) -> Result<(), String> {
         resolve_loopback_addresses(response.url())?;
         if response.status().is_redirection() {
-            return Err(MemoryError::LocalityViolation(
-                "redirects are disabled for local memory services".into(),
-            ));
+            return Err("redirects are disabled for local services".into());
         }
         Ok(())
     }
 }
 
-fn resolve_loopback_addresses(url: &Url) -> MemoryResult<Vec<SocketAddr>> {
+fn resolve_loopback_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> {
     let port = url
         .port_or_known_default()
-        .ok_or_else(|| MemoryError::InvalidEndpoint("memory endpoint has no port".into()))?;
+        .ok_or_else(|| "local endpoint has no port".to_string())?;
     match url.host() {
         Some(Host::Ipv4(address)) if address.is_loopback() => {
             Ok(vec![SocketAddr::new(address.into(), port)])
@@ -98,26 +79,18 @@ fn resolve_loopback_addresses(url: &Url) -> MemoryResult<Vec<SocketAddr>> {
         Some(Host::Domain(host)) if host.eq_ignore_ascii_case("localhost") => {
             resolve_localhost(port)
         }
-        Some(_) => Err(MemoryError::LocalityViolation(
-            "memory services may only use 127.0.0.0/8, ::1, or localhost".into(),
-        )),
-        None => Err(MemoryError::InvalidEndpoint(
-            "memory endpoint has no host".into(),
-        )),
+        Some(_) => Err("services may only use 127.0.0.0/8, ::1, or localhost".into()),
+        None => Err("local endpoint has no host".into()),
     }
 }
 
-fn resolve_localhost(port: u16) -> MemoryResult<Vec<SocketAddr>> {
+fn resolve_localhost(port: u16) -> Result<Vec<SocketAddr>, String> {
     let addresses: Vec<SocketAddr> = ("localhost", port)
         .to_socket_addrs()
-        .map_err(|error| {
-            MemoryError::InvalidEndpoint(format!("cannot resolve localhost: {error}"))
-        })?
+        .map_err(|error| format!("cannot resolve localhost: {error}"))?
         .collect();
     if addresses.is_empty() || addresses.iter().any(|address| !address.ip().is_loopback()) {
-        return Err(MemoryError::LocalityViolation(
-            "localhost did not resolve exclusively to loopback addresses".into(),
-        ));
+        return Err("localhost did not resolve exclusively to loopback addresses".into());
     }
     Ok(addresses)
 }
@@ -146,6 +119,8 @@ mod tests {
     #[test]
     fn creates_a_hardened_client() {
         let endpoint = LocalEndpoint::parse("http://127.0.0.1:8765").unwrap();
-        assert!(endpoint.http_client().is_ok());
+        assert!(endpoint
+            .http_client_with_timeout(Duration::from_secs(8))
+            .is_ok());
     }
 }

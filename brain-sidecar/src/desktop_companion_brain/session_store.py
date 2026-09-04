@@ -149,16 +149,6 @@ class ConversationSessionStore:
             )
             self._connection.commit()
 
-    def clear(self, scope: dict[str, str]) -> None:
-        with self._lock:
-            self._connection.execute(
-                """DELETE FROM conversation_turns
-                   WHERE user_id = ?1 AND character_id = ?2 AND session_id = ?3""",
-                _scope_tuple(scope),
-            )
-            self._connection.commit()
-
-
 def validate_scope(scope: Any) -> dict[str, str]:
     if not isinstance(scope, dict):
         raise ValueError("scope must be an object")

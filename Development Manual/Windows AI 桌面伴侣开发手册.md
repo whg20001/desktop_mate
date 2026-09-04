@@ -110,8 +110,8 @@ Vision
 | Storage（非敏感配置） | SQLite / Tauri Store |
 | Secrets Storage | keyring（Windows Credential Manager）/ Tauri Stronghold |
 | HTTP Client（Rust 侧） | reqwest |
-| AI | `AgentProvider`（当前只注册本机 OpenAI-compatible Provider，Endpoint 必须为 HTTP loopback） |
-| Memory | 全链路仅本机：Rust `MemoryManager` + `MemoryPolicy`；本地 SessionStore；本地 Mem0；本地记忆 LLM API；Phase II 本地 Graphiti |
+| AI | Python `LocalLlmProvider`（本机 OpenAI-compatible API，Endpoint 必须为 HTTP loopback） |
+| Memory | Python `ConversationSessionStore` + `MemoryPort`；本机 Mem0；Phase II 本地 Graphiti |
 | Vision（预留） | Rust trait `VisionProvider`（接口先行，默认不启用） |
 | Audio Engine | `TtsProvider` + SFX + Playback + LipSync 帧契约（Provider 与密钥在 Rust 侧） |
 
@@ -119,7 +119,7 @@ Vision
 
 Three.js 在 r170 已经将原来的 MMD 模块标记为 deprecated，因此项目不要把旧版 Three.js `MMDLoader` 直接写死在业务代码里。现在推荐把 MMD 放在独立 `MmdRuntime` 抽象层。目前 `@moeru/three-mmd` 仍在维护，并提供 PMX/MMD runtime、动画、toon material 以及独立 Ammo 物理插件。
 
-同样的抽象原则也适用于 BrainEngine 与 AudioEngine：业务代码只依赖 `AgentProvider` / `MemoryManager` / `MemoryProvider` / `VisionProvider` / `TtsProvider` 等稳定 port，不直接依赖某个模型、记忆或语音服务商。跨 Engine 的工作流由 CompanionOrchestrator 组合；动作建议统一经过 BehaviorPlanner。详见“AI Layer”“Memory Interface”“Vision Interface”和“AudioEngine Architecture”章节。
+同样的抽象原则也适用于 BrainEngine 与 AudioEngine：当前对话业务只依赖 `LocalLlmProvider` / `MemoryPort`，不直接依赖 Mem0 内部对象；AudioEngine 依赖 `TtsProvider` 等稳定 port。跨 Engine 的工作流由 CompanionOrchestrator 组合；动作建议统一经过 BehaviorPlanner。详见“AI Layer”“Memory Interface”“Vision Interface”和“AudioEngine Architecture”章节。
 
 ---
 
@@ -234,14 +234,14 @@ Physics/Window   Morph/Render    LipSync     BehaviorProposal
 
 `CompanionOrchestrator` 是应用层编排器，不是第五个业务 Engine。它负责组合各 Engine、订阅事件、转发契约和释放资源，但不实现 Windows 物理、PMX 动画、LLM 请求或音频解码。
 
-`ConversationOrchestrator` 则是 BrainEngine 内部的会话编排器，负责 Memory、DesktopContext、可选 Vision 与 AgentProvider 的调用。两者不要混为一个巨型类：
+`ConversationOrchestrator` 则是 BrainEngine 内部的会话编排器，负责 Memory、DesktopContext、可选 Vision 与 LocalLlmProvider 的调用。两者不要混为一个巨型类：
 
 ```text
 CompanionOrchestrator     → 跨 Engine 的应用工作流
 ConversationOrchestrator  → BrainEngine 内的一次对话工作流
 ```
 
-BrainEngine 内部的记忆结构采用 Manager + Policy + Provider，Mem0 和 Graphiti 都不能成为上层业务代码的直接依赖：
+Phase I 只有一个长期记忆后端，不额外维护空壳 Manager。ConversationOrchestrator 直接组合会话事实源与 `MemoryPort`：
 
 ```text
                          BrainEngine
@@ -250,28 +250,21 @@ BrainEngine 内部的记忆结构采用 Manager + Policy + Provider，Mem0 和 G
                               │
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
-        Agent            MemoryManager      Behavior Reasoning
-                              │
-             ┌────────────────┼────────────────┐
-             ▼                ▼                ▼
-       Session Memory   Semantic Memory   Episodic Memory
-       Local Store      Local Mem0        Local Mem0
-             │                │                │
-             └────────────────┼────────────────┘
-                              │
-                    Phase II（并列查询）
-                              ▼
-              Local GraphitiProvider / Temporal Graph
+   LocalLlmProvider   ConversationSessionStore   MemoryPort
+       Agent               Session/Outbox          │
+                                                  ▼
+                                             Mem0Memory
+                                       Semantic / Episodic
 ```
 
-上图中的 `Behavior Reasoning` 只负责生成语义动作建议，不能替代 BrainEngine 外部的 `BehaviorPlanner`。`LocalMemoryInferenceProvider` 通过本机 LLM API 负责长期记忆提取与归并，`Mem0Provider` 负责第一阶段的本机保存与召回；`GraphitiProvider` 在第二阶段补充本机时间和关系推理，两者由 `MemoryManager` 聚合，不形成 `Mem0 → Graphiti` 的硬依赖链。
+Mem0 的提取 LLM 和 Embedding 都显式指向本机 API，`MemoryPort` 隔离 Mem0 SDK。只有 Phase II 真正加入 Graphiti、出现多后端查询和写入策略时，才引入 `MemoryManager / MemoryPolicy`；Graphiti 与 Mem0 必须并列，不形成 `Mem0 → Graphiti` 的硬依赖链。动作建议仍由 BrainEngine 生成语义 ID，并由外部 `BehaviorPlanner` 最终批准。
 
 核心数据契约：
 
 ```text
 DesktopEngine   → DesktopEvent / SemanticDesktopContext
 BrainEngine     → AgentResponse / BehaviorProposal
-LocalMemoryInferenceProvider → MemoryWriteProposal
+MemoryPort       → Memory recall / write / update / delete
 BehaviorPlanner → BehaviorIntent / SpeechIntent
 AudioEngine     → AudioEvent / LipSyncFrame
 CharacterEngine → CharacterEvent / VisualState
@@ -625,9 +618,8 @@ desktop-companion/
 │   ├── brain/                         // Rust Brain Host / Supervisor
 │   │   ├── supervisor.rs              // Sidecar 生命周期、令牌、探活、退避重启
 │   │   ├── client.rs                  // 仅回环、禁代理和重定向的受控客户端
+│   │   ├── locality.rs                // 回环 Endpoint 与 hardened HTTP client
 │   │   └── model.rs                   // IPC DTO 与 CharacterResponse 校验
-│   ├── ai/                            // Rust Provider 契约（渐进迁移）
-│   ├── memory/                        // Rust Memory port / policy 契约
 │   ├── vision/                        // 可选 Vision port，默认关闭
 │   │
 │   ├── audio/                         // AudioEngine 的 Provider / 原生侧
@@ -680,8 +672,9 @@ ipc           不依赖具体 Engine 实现
 | `src/character/CharacterRuntime.ts` | CharacterEngine facade | 后续只接收 `BehaviorIntent`、视觉设置和 `LipSyncFrame` |
 | `MotionController.ts` + `MotionCatalog.ts` | 动作执行与动作目录 | 保持模型实现细节，不接收 AgentResponse 原始 JSON |
 | `src/speech/SpeechController.ts` | AudioEngine 语音原型 | 逐步由 `AudioController` 统一 TTS、SFX、打断和播放会话 |
-| Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话与 Mem0 |
-| Rust `ai/`、`memory/`、`vision/` | Provider / Policy 契约 | 保留稳定 port，逐步消除与 Python Sidecar 的重复事实源 |
+| Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话与 Mem0；不维护第二套 Rust 记忆事实源 |
+| Python `MemoryPort` | 长期记忆边界 | 隔离 Mem0 SDK；Phase II 出现多 Provider 后再引入 Manager / Policy |
+| Rust `vision/` | 可选 Vision 契约 | 默认关闭，等待明确授权的视觉功能 |
 | Rust `speech/provider.rs` | AudioEngine Provider 契约 | 增加 Provider Manager、受控播放和 RMS/Viseme 输出 |
 
 当前 Phase I 已实现：
@@ -2117,21 +2110,17 @@ set_character_model
 get_desktop_world
 ```
 
-Intelligence 相关 command 同样遵循 semantic 风格，并且全部在 Rust 侧完成实际网络请求（详见「AI Layer」「Memory Interface」「Vision Interface」章节）：
+Intelligence 相关 command 同样遵循 semantic 风格。WebView 只调用 Rust command；Rust 负责权限、安全校验和 Sidecar 生命周期，实际对话、会话与 Mem0 请求由本机 Python Brain Sidecar 执行。Vision 等未来能力仍必须通过受控 Engine port 接入：
 
 ```text
-send_chat_message
+get_brain_status
+get_brain_settings
+configure_brain
+converse
 
-list_ai_providers
-set_ai_provider
-test_ai_provider
-set_provider_credentials
-clear_provider_credentials
-get_provider_summary
-
-list_memory_providers
-set_memory_provider
-clear_memory
+list_brain_memories
+update_brain_memory
+delete_brain_memory
 
 set_vision_enabled
 list_vision_providers
@@ -2167,7 +2156,7 @@ character://surface
 每帧 100 个骨骼值
 ```
 
-Intelligence 相关事件单独归类为 `ai://` 前缀，驱动对话气泡与"思考中"状态，不驱动骨骼：
+未来增加流式响应时，Intelligence 事件使用 `ai://` 前缀，驱动对话气泡与“思考中”状态，不驱动骨骼。当前 Phase I 使用一次性 Tauri `converse` 返回值，不注册这些事件：
 
 ```text
 ai://thinking
@@ -2666,7 +2655,7 @@ Frontend（Three.js / TypeScript）**不允许**持有 API Key，也**不允许*
 - API Key 一旦进入 WebView 上下文，就存在被前端依赖库、DevTools、或未来的 Prompt Injection 链路间接泄露的风险；
 - 所有需要密钥的操作（HTTP 请求、OAuth 刷新、密钥读写）都更适合放在 Rust 侧，用 `reqwest` 发起，用 OS 级安全存储保存密钥。
 
-当前版本采用统一的本地边界：对话 LLM、记忆提取 LLM 与 Embedding API 都只能使用经过双端校验的 HTTP loopback 地址，不定义、注册或启用 Remote AgentProvider，也不存在本地模型失败后的云端 fallback。若未来改变该政策，必须单独进行隐私设计和用户授权评审。
+当前版本采用统一的本地边界：对话 LLM、记忆提取 LLM 与 Embedding API 都只能使用经过双端校验的 HTTP loopback 地址，不定义、注册或启用远程 LLM Provider，也不存在本地模型失败后的云端 fallback。若未来改变该政策，必须单独进行隐私设计和用户授权评审。
 
 最终数据流：
 
@@ -2706,108 +2695,25 @@ BehaviorPlanner ── BehaviorIntent ───► CharacterEngine / DesktopEngi
 
 `AvailableAction[]` 只包含动作 ID、描述和场景标签，来源于 MotionCatalog 与用户配置。它不包含本地文件路径、VMD 文件名、骨骼名称或 Morph 参数。这样 AI 能根据场景选择动作，但无法越过动作目录和执行策略。
 
-## AgentProvider：本机模型服务抽象
+## LocalLlmProvider：当前本机模型入口
 
-不允许业务代码直接依赖某一个 SDK，而是定义统一 trait。当前只允许通过本机 Sidecar 访问 OpenAI-compatible 接口：
+Phase I 只有一个生产实现：Python `LocalLlmProvider`。它调用本机 `/v1/chat/completions`，不需要为单一实现维护 Rust trait、注册表或热切换状态。
 
-```rust
-#[async_trait::async_trait]
-pub trait AgentProvider: Send + Sync {
-    /// 本机 Provider 的唯一标识，例如 "ollama" / "lm-studio"
-    fn id(&self) -> &str;
-
-    /// 是否支持多模态输入（图片），供 VisionProvider 复用同一个 Provider
-    fn supports_vision(&self) -> bool { false }
-
-    /// 一次性返回完整结果
-    async fn chat(&self, request: AgentRequest) -> Result<AgentResponse, AgentError>;
-
-    /// 流式返回，用于气泡逐字显示；默认可以用 chat() 模拟（一次性 yield 一个 chunk）
-    async fn chat_stream(
-        &self,
-        request: AgentRequest,
-        on_delta: Box<dyn Fn(String) + Send>,
-    ) -> Result<AgentResponse, AgentError> {
-        let response = self.chat(request).await?;
-        on_delta(response.speech.clone());
-        Ok(response)
-    }
-}
+```python
+def complete(
+    *,
+    user_input,
+    recent_messages,
+    memories,
+    available_actions,
+    desktop_context,
+) -> dict:
+    ...
 ```
 
-请求 / 响应契约（跨所有 provider 统一）：
+Rust IPC 的 `ConversationPayload` 和 `CharacterResponse` 是跨进程稳定契约；Python 内部参数不是第二套公共 API。Endpoint 和模型可在设置页修改，保存后 BrainSupervisor 受控重启 Sidecar。客户端禁用系统代理和 HTTP 重定向，Endpoint 必须解析为 loopback，不接收远程 API Key，也不存在云端 fallback。
 
-```rust
-pub struct AvailableAction {
-    pub id: String,
-    pub description: String,
-    pub scenes: Vec<String>,
-}
-
-pub struct AgentRequest {
-    pub system_prompt: String,
-    pub memory_context: Option<MemoryContext>, // 当前本机对话必须为 Some，可使用空上下文
-    pub desktop_context: Option<DesktopContextJson>,
-    pub vision_context: Option<String>,
-    pub available_actions: Vec<AvailableAction>, // 只给 AI 当前 allow-list
-    pub user_input: String,
-}
-
-pub struct AgentResponse {
-    pub speech: String,
-    pub emotion: Option<EmotionProposal>,
-    pub behavior: Option<BehaviorProposal>,
-}
-
-pub struct BehaviorProposal {
-    pub action_id: String,
-    pub intensity: Option<f32>,
-    pub reason: Option<String>, // 仅供诊断，不参与底层执行
-}
-```
-
-具体实现只需要把这套统一结构翻译成本机 API 的请求体：
-
-```text
-LocalOpenAICompatibleProvider → Ollama / LM Studio 等本机服务
-                                （HTTP loopback + /v1/chat/completions）
-```
-
-`LocalOpenAICompatibleProvider` 只接受通过 `LocalEndpoint` 校验的 `base_url` 和显式 `model`，不接收远程 API Key，不通过系统代理，不跟随 HTTP 重定向。
-
-## AgentManager：运行时可热切换
-
-```rust
-pub struct AgentManager {
-    providers: HashMap<String, Arc<dyn AgentProvider>>,
-    active: RwLock<String>,
-}
-
-impl AgentManager {
-    pub fn active(&self) -> Arc<dyn AgentProvider> { /* ... */ }
-    pub fn set_active(&self, provider_id: &str) -> Result<(), AgentError> { /* ... */ }
-    pub fn register(&mut self, provider: Arc<dyn AgentProvider>) { /* ... */ }
-}
-```
-
-对应 Tauri command：
-
-```text
-list_ai_providers
-set_ai_provider(providerId)
-test_ai_provider(providerId)   // 发一条测试消息，验证本机 base_url / model 是否可用
-```
-
-切换 provider 不需要重启角色，`ConversationOrchestrator` 永远只持有 `AgentManager`，不关心当前具体是哪一家。
-
-## 流式响应事件
-
-```text
-ai://thinking          // 开始请求，前端可显示"思考中"动画
-ai://delta   { text }  // 增量文本，驱动气泡逐字显示
-ai://response { speech, emotionProposal, behaviorProposal } // 经 Rust 校验的语义建议
-ai://error   { message, providerId }
-```
+当前不维护 Agent registry、热切换 command 或流式事件协议。只有出现第二个真实本机 Provider 和明确的无重启切换需求时，才提取 Manager；流式输出也在有真实 UI 消费者时再增加。
 
 ## LLM 结构化输出（不变的契约）
 
@@ -2829,22 +2735,22 @@ ai://error   { message, providerId }
 请求校验必须满足：
 
 ```text
-AgentProvider Endpoint → 必须通过 HTTP loopback 校验
-ConversationOrchestrator → 只能传入本机 SessionStore / MemoryManager 产生的 MemoryContext
+LocalLlmProvider Endpoint → 必须通过 HTTP loopback 校验
+ConversationOrchestrator → 只能传入本机会话和 MemoryPort 召回的上下文
 本机服务不可用 → 返回 Degraded，不回退到远程 Provider
 ```
 
-当前没有远程或无记忆云端模式；所有对话请求都通过本机 Provider 执行。
+当前没有远程或无记忆云端模式；所有对话请求都通过本机 LocalLlmProvider 执行。
 
 上面的 `behavior` 只是 `BehaviorProposal`。BehaviorPlanner 必须再次检查 MotionCatalog、用户启用项、当前物理状态、优先级与冷却时间，批准后才生成 `BehaviorIntent`。
 
-`MemoryWriteProposal` 不属于通用 `AgentResponse`，而是由独立的本机 `LocalMemoryInferenceProvider` 根据本轮对话和本地语义事件生成。最终是否写入、如何分类和进入哪个作用域，由 MemoryPolicy 与 `MemoryManager` 决定。本地 LLM 也不能直接写 SessionStore、Mem0 或 Graphiti。
+当前 Phase I 由 `Mem0Memory.remember_turn` 在敏感内容检查后调用 Mem0；Mem0 的 LLM 和 Embedding 均显式绑定本机 API。ConversationOrchestrator 只依赖 `MemoryPort`，不直接依赖 Mem0 SDK。
 
 ---
 
 # 56. Memory Interface（记忆系统接口）
 
-记忆系统采用“本地事实源 + 统一管理器 + 可替换 Provider”的结构。项目第一阶段选择本机部署的 Mem0 作为长期记忆框架，但 BrainEngine、ConversationOrchestrator 和 Agent 都不能直接依赖 Mem0 的 SDK、HTTP 数据结构或存储模型。
+记忆系统采用“本地会话事实源 + 窄 MemoryPort + 可替换 Provider”的结构。Phase I 只有 Mem0 一个长期记忆后端，因此不维护无消费者的 Rust MemoryManager、第二套 SQLite 或第二组 Memory commands；BrainEngine 和 ConversationOrchestrator 也不能直接依赖 Mem0 的 SDK、HTTP 数据结构或存储模型。
 
 ## 强制本地化边界
 
@@ -2883,23 +2789,20 @@ Windows Named Pipe
 
 Mem0、向量数据库、embedding 模型、重排模型、Graphiti 及其图数据库必须全部在本机运行。任何遥测、云备份、托管控制台同步或上传诊断正文的功能都必须关闭。
 
-用于“提取哪些信息值得记住”、分类、归并、摘要、去重和重要性评估的 LLM 必须通过独立的 `LocalMemoryInferenceProvider` 调用本机 API。禁止调用远程 AgentProvider，禁止在本地模型不可用时自动回退到云端；失败时只保留本地 Session Memory 或进入本地待处理队列。
+用于“提取哪些信息值得记住”、分类、归并、摘要、去重和重要性评估的 LLM 必须由 `Mem0Memory` 显式配置为本机 API。禁止调用远程 Provider，禁止在本地模型不可用时自动回退到云端；失败时只保留本地 Session Memory 和 outbox 待处理状态。
 
 ```text
 ConversationOrchestrator
           │
           ▼
-    MemoryManager                 ← BrainEngine 唯一使用的记忆入口
-          │
-    ┌─────┼──────────────────┐
-    ▼     ▼                  ▼
-Session  Local Mem0     Local Graphiti
-Store    Phase I        Phase II
-SQLite   Semantic +     Temporal Graph
-         Episodic
+ConversationSessionStore          MemoryPort
+Session / Outbox                      │
+SQLite                                ▼
+                                  Mem0Memory
+                             Semantic + Episodic
 ```
 
-`MemoryManager` 负责查询编排、上下文预算、结果合并、降级和生命周期；`MemoryPolicy` 负责写入许可、类型判定、隐私过滤、去重与重要性；Provider 只负责把已经批准的数据映射到具体后端。
+`ConversationOrchestrator` 负责查询顺序、降级和对话提交；`ConversationSessionStore` 负责 Session 与 outbox；`MemoryPort` 负责隔离具体后端。Phase II 引入 Graphiti 时，再增加负责多 Provider 合并和写入政策的 `MemoryManager / MemoryPolicy`。
 
 ## 三类记忆
 
@@ -2995,78 +2898,26 @@ pub struct MemoryContext {
 
 `user_id` 隔离不同用户，`character_id` 隔离不同桌宠的人设与共同经历，`session_id` 只限定当前会话。不得只用一个全局字符串作为所有记忆的命名空间。
 
-## Provider 与 Manager 接口
+## Phase I MemoryPort
 
-```rust
-#[async_trait::async_trait]
-pub trait LocalMemoryInferenceProvider: Send + Sync {
-    fn id(&self) -> &str;
-    fn endpoint(&self) -> &LocalEndpoint;
-    async fn extract(
-        &self,
-        input: LocalMemoryExtractionInput,
-    ) -> Result<Vec<MemoryWriteProposal>, MemoryError>;
-    async fn consolidate(
-        &self,
-        input: LocalMemoryConsolidationInput,
-    ) -> Result<Vec<MemoryWriteProposal>, MemoryError>;
-}
-
-#[async_trait::async_trait]
-pub trait SessionStore: Send + Sync {
-    async fn append_turn(
-        &self,
-        scope: &MemoryScope,
-        messages: Vec<ChatMessage>,
-    ) -> Result<(), MemoryError>;
-    async fn get_recent(
-        &self,
-        scope: &MemoryScope,
-        limit: usize,
-    ) -> Result<Vec<ChatMessage>, MemoryError>;
-    async fn clear_scope(&self, scope: &MemoryScope) -> Result<(), MemoryError>;
-    async fn export_scope(&self, scope: &MemoryScope) -> Result<MemoryExport, MemoryError>;
-}
-
-#[async_trait::async_trait]
-pub trait MemoryProvider: Send + Sync {
-    fn id(&self) -> &str;
-    fn endpoint(&self) -> Option<&LocalEndpoint>; // None 仅表示进程内本机实现
-    async fn remember(&self, entry: MemoryEntry) -> Result<MemoryId, MemoryError>;
-    async fn search(&self, query: MemoryQuery) -> Result<Vec<MemoryRecord>, MemoryError>;
-    async fn forget(&self, scope: &MemoryScope, id: &MemoryId) -> Result<(), MemoryError>;
-    async fn clear_scope(&self, scope: &MemoryScope) -> Result<(), MemoryError>;
-    async fn health(&self) -> Result<ProviderHealth, MemoryError>;
-}
-
-#[async_trait::async_trait]
-pub trait TemporalGraphProvider: Send + Sync {
-    fn endpoint(&self) -> Option<&LocalEndpoint>; // None 仅表示进程内本机实现
-    async fn index_event(&self, event: ApprovedMemoryEvent) -> Result<(), MemoryError>;
-    async fn search_relations(
-        &self,
-        query: TemporalQuery,
-    ) -> Result<Vec<TemporalRelation>, MemoryError>;
-    async fn clear_scope(&self, scope: &MemoryScope) -> Result<(), MemoryError>;
-}
+```python
+class MemoryPort(Protocol):
+    def ready(self): ...
+    def close(self): ...
+    def search(self, query, scope, limit): ...
+    def remember_turn(self, messages, scope, turn_id): ...
+    def list(self, scope): ...
+    def update(self, memory_id, content, scope): ...
+    def delete(self, memory_id, scope): ...
 ```
 
-`MemoryManager` 对 BrainEngine 暴露更高层的窄接口：
-
-```text
-append_turn(scope, messages)
-build_context(scope, query, budget)
-commit(scope, approved_memory)
-forget(scope, memory_id)
-clear_scope(scope)
-export_scope(scope)
-```
+`Mem0Memory` 和关闭长期记忆时使用的 `DisabledMemory` 实现同一窄接口。会话读写与 outbox 由独立的 `ConversationSessionStore` 负责，不再通过另一层 Rust Manager 转发。
 
 Agent 只能接收裁剪后的 `MemoryContext`，不能获得 Provider 客户端。检索结果被视为不可信引用数据，不能作为 system instruction 执行；任何类似“忽略规则”“运行命令”的记忆内容都只能作为被引用的用户资料。
 
-`LocalEndpoint` 构造时必须完成 IP 解析、loopback 校验、代理禁用和 redirect 策略校验，不能用未经验证的 URL 字符串代替。`LocalMemoryInferenceProvider` 的输入和输出只存在于本机；实现不得包含远程 fallback。
+`LocalEndpoint` 构造时必须完成 IP 解析、loopback 校验、代理禁用和 redirect 策略校验，不能用未经验证的 URL 字符串代替。Mem0 内部的 LLM/Embedding 客户端必须接受相同的双端校验，且不得包含远程 fallback。
 
-## MemoryPolicy：唯一写入门
+## Phase II MemoryPolicy
 
 ```text
 Conversation Turn / System Semantic Event
@@ -3090,31 +2941,28 @@ Conversation Turn / System Semantic Event
   Mem0Provider       Phase II GraphitiProvider
 ```
 
-本地 LLM 建议的 `suggested_kind` 和 `importance` 没有最终决定权。MemoryPolicy 可以拒绝、降级、改类或要求用户确认。密码、Token、支付信息、未授权屏幕内容等敏感数据默认禁止进入长期记忆。
+上图是 Phase II 多 Provider 写入流程。当前 Phase I 在 `Mem0Memory.remember_turn` 前执行敏感标记过滤，密码、Token、支付信息、未授权屏幕内容等敏感数据默认禁止进入长期记忆。加入 Graphiti 或可编辑写入候选后，再把分类、去重、重要性和用户确认提取成独立 `MemoryPolicy`。
 
 ## 对话调用顺序
 
 ```text
 对话开始前：
   1. SessionStore.get_recent(scope, N)
-  2. Mem0Provider.search(query)
-  3. Phase II：GraphitiProvider.search_relations(query)
-  4. MemoryManager 去重、排序并按 token budget 生成 MemoryContext
-  5. ConversationOrchestrator 将 MemoryContext 放入本机 AgentRequest
+  2. MemoryPort.search(query)
+  3. ConversationOrchestrator 将最近会话与召回结果传给 LocalLlmProvider
 
 对话结束后：
-  1. SessionStore 立即追加本轮 user / assistant 消息
-  2. LocalMemoryInferenceProvider 通过本地 LLM API 提取 MemoryWriteProposal
-  3. MemoryWriteProposal 进入 MemoryPolicy
-  4. 只有 ApprovedMemoryEvent 可以提交给 Mem0Provider
-  5. Phase II 将同一批准事件独立索引到 GraphitiProvider
+  1. ConversationSessionStore 原子提交 user / assistant / CharacterResponse
+  2. 同一事务创建 memory outbox 状态
+  3. MemoryPort.remember_turn() 使用本机 Mem0 提取并写入
+  4. 成功后完成 outbox；失败则保留待重试状态
 ```
 
 Mem0 或 Graphiti 不可用时，对话仍应依靠 Session Memory 工作；长期写入进入本地待处理队列并采用有限重试，不阻塞角色渲染、动作播放或应用退出。
 
 ## Mem0 接入策略（Phase I）
 
-如果采用 Mem0 的 Python 生态实现，必须以本机受控 sidecar 运行，通过 Rust `Mem0Provider` 使用 loopback 或本机 IPC 调用，不把 Python 解释器嵌入 Character WebView：
+Mem0 的 Python 实现必须在本机受控 Sidecar 中运行，由 Rust `BrainClient` 通过 loopback 调用，不把 Python 解释器嵌入 Character WebView：
 
 ```text
 Rust Desktop Host / BrainSupervisor
@@ -3137,9 +2985,9 @@ Embedding 向量维度必须显式配置，并同时传给 Mem0 embedder 与 Qdr
 
 日志默认只记录时间、级别、请求方法、路由和错误类型，不记录认证令牌、完整对话、Prompt、记忆正文或请求正文。
 
-Mem0 的内部 memory ID、metadata 字段和过滤语法不能越过 `Mem0Provider`。项目只保存自身稳定 ID 与 provider mapping，确保以后可以替换后端。
+Mem0 的内部 memory ID、metadata 字段和过滤语法不能越过 Python `MemoryPort`。Rust 和前端只接收稳定的 `BrainMemory` DTO，确保以后可以替换后端。
 
-Mem0 的内置 LLM 提取功能只有在“本机推理 + 提取结果可在持久化前交给 MemoryPolicy 审核”时才能使用。如果当前 Mem0 API 会把提取与写入合并成无法拦截的一步，则由 `LocalMemoryInferenceProvider` 先生成候选，再让 `Mem0Provider` 以“不再推理”的方式保存批准结果；不得为了方便绕过 MemoryPolicy。
+Phase I 使用 Mem0 内置提取，但前提是 LLM、Embedding、SQLite history 和 Qdrant 全部显式本机化，并在调用前执行敏感内容过滤。Phase II 引入更多事件来源或 Graphiti 前，必须增加可审计的 `MemoryPolicy`，不能让多个 Provider 各自决定写入规则。
 
 ## Graphiti 接入策略（Phase II）
 
@@ -3155,42 +3003,39 @@ Graphiti 及其图数据库同样必须部署在本机。Graphiti 用于补充�
 
 Graphiti 的写入来源是 `ApprovedMemoryEvent` 或本地事实源重建任务，不读取 Mem0 私有存储。这样 Mem0 与 Graphiti 任一后端都可以单独升级或移除。
 
-Graphiti 不得连接托管图数据库、远程 embedding 或远程 LLM。Phase II 实现必须复用 `LocalEndpoint` 与 `LocalMemoryInferenceProvider` 的网络边界。
+Graphiti 不得连接托管图数据库、远程 embedding 或远程 LLM。Phase II 实现必须复用当前 `LocalEndpoint` 和 Python local-only HTTP client 的网络边界。
 
 ## 目录与配置
 
 ```text
-src-tauri/src/brain/memory/
-├── mod.rs
-├── model.rs
-├── manager.rs
-├── policy.rs
-├── session_store.rs
+src-tauri/src/brain/
+├── supervisor.rs
+├── client.rs
 ├── locality.rs
-├── local_inference.rs
-├── provider.rs
-├── temporal_graph.rs
-└── providers/
-    ├── mod.rs
-    ├── mem0.rs
-    └── graphiti.rs              // Phase II
+└── model.rs
+
+brain-sidecar/src/desktop_companion_brain/
+├── orchestrator.py
+├── session_store.py
+├── memory.py
+├── llm.py
+├── security.py
+└── server.py
 ```
 
-对应 Tauri command：
+届时再增加 Tauri command：
 
 ```text
-get_memory_status
-test_memory_provider
-set_local_memory_endpoint(endpoint)
-test_local_memory_inference
-list_memories(scope, filter)
-forget_memory(scope, memoryId)
-clear_memory_scope(scope)
-export_memory_scope(scope)
-set_memory_privacy_mode(mode)
+get_brain_status
+get_brain_settings
+configure_brain
+converse
+list_brain_memories
+update_brain_memory
+delete_brain_memory
 ```
 
-记忆设置必须提供长期记忆开关、原始历史保留策略、逐条删除、按作用域清空和导出。删除操作要同时覆盖本地事实源、Mem0 以及已启用的 Graphiti 索引，并向用户报告部分失败，不能只删除界面中的展示记录。
+当前设置页提供长期记忆开关、回答前召回、回答后写入、列表、修改和逐条删除。按作用域清空、导出及原始历史保留策略属于后续显式功能，不通过隐藏 Tauri command 预留。
 
 记忆设置中的 Endpoint 只能选择自动发现的本机服务或填写通过 `LocalEndpoint` 校验的 loopback 地址。界面不提供云端 Provider、API Key、OAuth 或远程地址字段。
 
@@ -3238,21 +3083,20 @@ pub struct VisionResult {
 }
 ```
 
-## 与 AgentProvider 的关系
+## 与本机多模态 Provider 的关系
 
 多数多模态模型的图片输入其实走的是同一条 Chat API（把图片作为一条 message 内容），因此 `VisionProvider` 通常不需要独立实现，而是：
 
 ```text
-OpenAICompatibleProvider 同时实现 AgentProvider 与 VisionProvider
-（如果 supports_vision() = true）
+未来的 LocalMultimodalProvider 可同时承担对话与 VisionProvider
 
 VisionProvider.describe()
-  = 构造一条包含图片的 AgentRequest
+  = 构造一条包含图片的本机多模态请求
   → 复用同一个 HTTP client / 同一份密钥配置
   → 只是 prompt 与解析方式不同
 ```
 
-只有当用户接入的是纯本地视觉模型（例如专门跑 LLaVA 的服务）时，才需要一个不依赖 AgentProvider 的独立实现。
+只有当用户接入独立的纯本地视觉模型（例如专门运行 LLaVA 的服务）时，才需要单独实现 VisionProvider。
 
 ## 权限与隐私边界
 
@@ -3284,7 +3128,7 @@ src-tauri/src/vision/
 ├── capture.rs          // 截屏（Windows native，受权限开关控制）
 └── providers/
     ├── mod.rs
-    └── multimodal_agent.rs  // 包装某个 AgentProvider 实现 VisionProvider
+    └── local_multimodal.rs  // 未来本机多模态实现
 ```
 
 对应 Tauri command（先定义，Phase 10 之后再实现）：
@@ -3471,7 +3315,7 @@ Independent Settings Window（4:3）
 | 助手模型 | 模型 ID、显示比例、色彩和非敏感连接参数 | 直接加载任意磁盘路径 |
 | 声音配置 | 音色 ID、语言、音量、语速、音调 | 在 WebView 保存云端密钥 |
 | 动作配置 | AI 动作开关、允许的语义动作 ID | 让 AI 直接填骨骼或 VMD 路径 |
-| 记忆配置 | 长期记忆开关、历史保留策略、本地服务状态、本地 Endpoint、查看/删除/清空/导出 | 配置云端/局域网服务、绕过 MemoryPolicy、把 MemoryContext 交给远程 Agent 或只删除展示记录 |
+| 记忆配置 | 当前：长期记忆、召回/写入开关、本地 Endpoint、查看/修改/逐条删除；后续：历史策略、清空/导出 | 配置云端/局域网服务、把记忆上下文交给远程 Agent 或只删除展示记录 |
 
 模型和动作选择都依赖目录注册：
 
@@ -3784,7 +3628,7 @@ Computer Vision
 真正活在Windows桌面上
 ```
 
-> 注意区分“暂时不实现”与“不预留接口”。Phase 0 应先定义 `AgentProvider` / `MemoryProvider` / `VisionProvider` / `TtsProvider`、`MemoryManager` / `MemoryPolicy`、`BehaviorProposal` / `BehaviorIntent`、`LipSyncFrame` 和 Engine port，但只使用 Stub 或本地调试适配器。这样后续接入 LLM、记忆、真实语音和视觉时只需新增 Provider 与编排流程，不需要让 CharacterRuntime 反向依赖具体服务商。
+> 只为当前生产消费者定义接口。跨 Engine 的稳定 DTO 可以先行，但单实现注册表、空 Manager、无调用 command 和假 Provider 不作为“预留扩展点”加入；出现第二个真实实现时再提取抽象。
 
 ---
 
@@ -3809,8 +3653,8 @@ DesktopBridge
 CharacterRuntime facade
 BehaviorProposal / BehaviorIntent
 AudioEvent / LipSyncFrame
-AgentProvider / MemoryProvider / VisionProvider / TtsProvider Stub
-MemoryManager / MemoryPolicy / SessionStore / LocalMemoryInferenceProvider Stub
+当前 Engine 边界所需的最小 DTO
+已有生产消费者的 Provider port
 ```
 
 验收：
@@ -4059,11 +3903,10 @@ AudioEngine 不直接修改 PMX Morph
 当前 Phase I 完成：
 
 ```text
-Local AgentProvider 至少一个可用实现（推荐本机 OpenAI-compatible API）
-AgentManager
-SessionStore（本地 SQLite 会话与事件事实源）
-MemoryManager / MemoryPolicy
-LocalEndpoint / LocalMemoryInferenceProvider
+LocalLlmProvider（本机 OpenAI-compatible API）
+ConversationSessionStore（本地 SQLite 会话事实源与 outbox）
+MemoryPort / Mem0Memory / DisabledMemory
+Rust LocalEndpoint + Python local-only HTTP client
 Python Mem0 adapter（Phase I 长期语义与情景记忆）
 ConversationOrchestrator
 AvailableAction 注入
@@ -4128,14 +3971,14 @@ Mem0 不可用时仍可使用 Session Memory 对话
 公网、局域网、系统代理和非 loopback redirect 均被拒绝
 Semantic / Episodic Memory 使用独立类型和作用域
 不同 user / character / session 的记忆不会串线
-可以在设置里热切换 Provider
+可以在设置里修改本机 Endpoint、模型与 Embedding 维度，保存后受控重启 Sidecar
 LLM 只能从当前 MotionCatalog allow-list 建议 actionId
 未知、禁用或状态冲突的动作被拒绝、延迟或替换
 角色 Falling 时 AI Greeting 不会覆盖系统动作
 LLM speech 进入 AudioEngine，而不是直接调用播放设备
-用户可以查看、导出、逐条删除或按作用域清空记忆
-长期记忆写入必须经过 MemoryPolicy
-Remote AgentProvider 不存在且不可用
+用户可以查看、修改或逐条删除记忆
+长期记忆写入执行敏感内容过滤，并通过 SQLite outbox 保证可恢复
+远程 LLM Provider 不存在且不可用
 日志、遥测、缓存和待处理队列不会把记忆内容发送或写入非本机位置
 ```
 
@@ -4300,32 +4143,23 @@ User Input + Memory + DesktopContext + AvailableAction[]
 User Input
     │
     ▼
-MemoryManager.build_context()
-    ├─ SessionStore.get_recent()
-    ├─ Local Mem0Provider.search()
-    └─ Phase II Local GraphitiProvider.search_relations()
+ConversationOrchestrator
+    ├─ ConversationSessionStore.recent()
+    └─ MemoryPort.search()
     │
     ▼
-MemoryContext → Local AgentProvider
+Recent messages + memories → LocalLlmProvider
                     │
                     ▼
-          Conversation Result
+             CharacterResponse
                     │
-                    ▼
-       LocalMemoryInferenceProvider
-          （仅本机 LLM API）
-                    │ MemoryWriteProposal
-                    ▼
-              MemoryPolicy
-                    │ ApprovedMemoryEvent
-                    ▼
-              MemoryManager
-        ┌───────────┼──────────────────┐
-        ▼           ▼                  ▼
- SessionStore   Local Mem0Provider   Phase II Local GraphitiProvider
+       ┌────────────┴─────────────┐
+       ▼                          ▼
+ConversationSessionStore   MemoryPort.remember_turn()
+commit + outbox                  Local Mem0
 ```
 
-SessionStore 保存原始会话与语义事件事实；Mem0 和 Graphiti 保存本机可重建的派生记忆。记忆检索可以影响本地 Agent 的回答、情绪与动作建议，但动作仍必须走 `BehaviorProposal → BehaviorPlanner → BehaviorIntent`。当前对话链路不允许定义或注册 Remote AgentProvider。
+ConversationSessionStore 保存原始会话与 outbox；Mem0 保存本机长期记忆。Phase II 加入 Graphiti 时再引入多 Provider 聚合层。记忆检索可以影响本地 Agent 的回答、情绪与动作建议，但动作仍必须走 `BehaviorProposal → BehaviorPlanner → BehaviorIntent`。当前对话链路不允许定义或注册远程 LLM Provider。
 
 ## 优先级与抢占
 
@@ -4373,14 +4207,13 @@ Desktop Companion
 │
 └── BrainEngine
     ├── ConversationOrchestrator
-    ├── AgentProvider
-    ├── MemoryManager / MemoryPolicy
-    ├── SessionStore（本地事实源）
-    ├── LocalMemoryInferenceProvider（本机 LLM API）
-    ├── Local Mem0Provider（Phase I）
-    ├── Local GraphitiProvider（Phase II，可选）
+    ├── LocalLlmProvider（本机 LLM API）
+    ├── ConversationSessionStore（本地事实源与 outbox）
+    ├── MemoryPort
+    ├── Mem0Memory（Phase I）
+    ├── MemoryManager / MemoryPolicy / Graphiti（Phase II）
     ├── VisionProvider
-    └── BehaviorProposal / MemoryWriteProposal
+    └── CharacterResponse / BehaviorProposal
 ```
 
 所有权规则：
@@ -4631,14 +4464,14 @@ Physics/Window   Morph/Render    LipSync        BehaviorProposal
 PMX → VRM
 Three.js → 其他 Renderer
 Web Speech → 原生/云端 TTS
-OpenAI Compatible → 其他 AgentProvider
-本机 Mem0Provider → 其他本机长期 MemoryProvider
-本机 GraphitiProvider → 其他本机 TemporalGraphProvider
+LocalLlmProvider → 未来其他本机 LLM 实现
+Mem0Memory → 未来其他本机长期记忆实现
+本机 Graphiti → 未来其他本机 Temporal Graph 实现
 ```
 
 替换某一个实现时，其他 Engine 不应发生结构性修改。真正稳定的是 Engine port 和数据契约，而不是某个目录名或第三方库。
 
-BrainEngine 内部的 AI、Memory、Vision 分别通过 Provider trait 插拔；AudioEngine 的 TTS/STT 同样通过 Provider trait 插拔。MemoryManager 聚合本地 SessionStore、Phase I Mem0Provider 与 Phase II GraphitiProvider，但 Provider 之间不互相依赖。它们共享的是安全存储、错误模型和生命周期规范，不是彼此的内部状态。
+BrainEngine 内部的 AI、Memory、Vision 分别通过稳定 port 插拔；AudioEngine 的 TTS/STT 同样通过 Provider trait 插拔。Phase I 由 Python `ConversationOrchestrator` 组合 `ConversationSessionStore` 与 `MemoryPort`。只有 Phase II 引入 Graphiti 等多个长期记忆 Provider 后，才由 `MemoryManager` 并列聚合 Mem0Provider 与 GraphitiProvider；Provider 之间不互相依赖。它们共享的是安全存储、错误模型和生命周期规范，不是彼此的内部状态。
 
 ## 架构不变量
 
@@ -4649,11 +4482,11 @@ BrainEngine 内部的 AI、Memory、Vision 分别通过 Provider trait 插拔；
 4. BrainEngine 只生成语义 Proposal，不拥有执行权限
 5. BehaviorPlanner 是 Proposal 进入执行层的唯一入口
 6. CompanionOrchestrator 只组合和路由，不吞并各 Engine 业务逻辑
-7. MemoryPolicy 是长期记忆的唯一写入门，Mem0 与 Graphiti 不直接接收 Agent 原始输出
+7. Phase I 长期记忆写入必须经过敏感内容过滤和 outbox；Phase II 多 Provider 写入必须统一经过 MemoryPolicy
 8. SessionStore 是可审计、可删除的本地事实源，派生记忆索引必须可在本机重建
 9. 所有记忆数据、索引、缓存、日志和备份只能存放在本机
 10. 记忆提取、归并、embedding 与重排只能使用本机 API，禁止远程 fallback
-11. 当前版本不定义或注册 Remote AgentProvider；所有 LLM 与 Embedding API 只能使用回环地址
+11. 当前版本不定义或注册远程 LLM Provider；所有 LLM 与 Embedding API 只能使用回环地址
 ```
 
 ---
@@ -4794,15 +4627,15 @@ Python LocalLlmProvider
 记忆系统：
 
 ```text
-Rust 侧 MemoryManager + MemoryPolicy
+Python ConversationSessionStore + MemoryPort
 +
-本地 SessionStore / SQLite（会话与事件事实源）
+本地 SQLite（会话事实源与 outbox）
 +
-LocalMemoryInferenceProvider（本机 LLM API；无远程 fallback）
+LocalLlmProvider + Mem0 本机推理（无远程 fallback）
 +
-Phase I 本机 Mem0Provider（Semantic + Episodic）
+Phase I 本机 Mem0Memory（Semantic + Episodic）
 +
-Phase II 本机 GraphitiProvider + 本机图数据库（Temporal Graph）
+Phase II MemoryManager / MemoryPolicy + 本机 Graphiti（Temporal Graph）
 +
 user / character / session 作用域隔离
 +
@@ -4814,7 +4647,7 @@ user / character / session 作用域隔离
 ```text
 Rust 侧 VisionProvider trait（先定义接口，第一版不启用）
 +
-默认可直接复用支持多模态的 AgentProvider
+未来可复用支持多模态的本机 LLM Provider
 +
 显式权限开关 + 用户可感知的截屏提示，禁止后台静默截屏
 ```
@@ -4908,7 +4741,7 @@ AudioController + LipSyncFrame
 ↓
 
 15
-ConversationOrchestrator + AgentProvider
+ConversationOrchestrator + LocalLlmProvider
 ```
 
 进入第 15 步以前必须能够证明：

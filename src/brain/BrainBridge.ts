@@ -39,10 +39,6 @@ export class BrainBridge {
     return brainSettingsSchema.parse(await invoke('configure_brain', { settings }));
   }
 
-  async restart(): Promise<void> {
-    await invoke('restart_brain');
-  }
-
   async converse(
     userInput: string,
     scope: ConversationScope,
