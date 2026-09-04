@@ -15,19 +15,27 @@
 - 原生窗口拖拽、Rust 重力、任务栏工作区地面和窗口顶部碰撞；
 - Win32/DWM 窗口枚举，多显示器负坐标和 Per-Monitor DPI 数据；
 - SpeechController、TTS/STT Provider 与 RMS/viseme 动作接口；当前使用无密钥的 Web Speech 调试适配器，STT 尚未启用；
-- `AgentProvider`、`MemoryProvider`、`VisionProvider` 接口占位；未启用 AI 网络、密钥或截屏能力。
+- Rust `BrainSupervisor` 自动启动、鉴权、探活、重启并关闭 Python Brain Sidecar，Brain 故障不会阻止桌宠窗口启动；
+- Python `ConversationOrchestrator` 提供多轮会话、本地 OpenAI-compatible LLM、结构化情绪/动作建议和 Speech Bubble；
+- Mem0 使用 SQLite 历史与 Qdrant embedded local mode 保存跨会话记忆，支持召回、写入、修改、删除及崩溃后 outbox 恢复；
+- Brain、LLM、Embedding 与 Mem0 全链路仅允许回环地址；禁用代理、重定向、云端 Provider 与遥测。
 
 ## 开发环境
 
-需要 Windows 10/11、WebView2、Node.js、pnpm、Rust stable MSVC，以及 Visual Studio 2022 Build Tools 中的 **Desktop development with C++** 工作负载。
+需要 Windows 10/11、WebView2、Node.js、pnpm、Rust stable MSVC、`uv`，以及 Visual Studio 2022 Build Tools 中的 **Desktop development with C++** 工作负载。不需要 Docker。
 
 ```powershell
 pnpm install
+uv sync --project brain-sidecar
 pnpm check
 pnpm tauri dev
 ```
 
-启动后单击角色可演示系统语音、气泡和嘴型联动。语音模块的分层与后续 AI/STT 接线方式见 [语音模块架构](docs/voice-architecture.md)。
+调试前请先在本机启动 OpenAI-compatible LLM 与 Embedding API；默认端点均为 `http://127.0.0.1:11434/v1`，默认模型为 `qwen2.5:7b` 和 `nomic-embed-text`，后者的默认向量维度为 768。更换 Embedding 模型时必须在设置页同步填写实际向量维度。未启动模型服务时，角色窗口仍会正常运行，设置页将 Brain 标记为 `Degraded`。
+
+`pnpm tauri dev` 会自动启动 Python Sidecar，应用退出时自动关闭；不要单独长期运行 Sidecar。会话、Mem0 历史、Qdrant 向量与脱敏日志位于 `%LOCALAPPDATA%\com.desktopmate.companion\brain`。启动后可在角色下方输入对话；双击角色进入设置页，可查看 Brain 状态并管理本地记忆。语音模块的分层与后续 AI/STT 接线方式见 [语音模块架构](docs/voice-architecture.md)。
+
+本阶段只使用调试运行，不需要执行下方生产打包命令。
 
 生产构建：
 

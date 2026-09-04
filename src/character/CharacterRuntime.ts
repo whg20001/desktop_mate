@@ -1,4 +1,5 @@
 import type { CharacterSettings } from '../config/CharacterSettings';
+import type { BehaviorIntent } from '../behavior/BehaviorTypes';
 import type { DesktopBridge } from '../desktop/DesktopBridge';
 import type { CharacterRenderer } from '../renderer/CharacterRenderer';
 import type { SpeechMotionFrame, SpeechMotionTarget } from '../speech/SpeechTypes';
@@ -83,6 +84,27 @@ export class CharacterRuntime implements SpeechMotionTarget {
 
   talk(durationSeconds = 2.2): void {
     this.motion.talk(durationSeconds);
+  }
+
+  applyBehavior(intent: BehaviorIntent): void {
+    if (intent.emotion) {
+      this.motion.setEmotion(
+        intent.emotion.kind,
+        intent.emotion.intensity,
+        intent.emotion.durationMs / 1000,
+      );
+    }
+    switch (intent.actionId) {
+      case 'greeting':
+        this.motion.greet();
+        break;
+      case 'talking':
+        this.motion.talk();
+        break;
+      case 'idle':
+      case undefined:
+        break;
+    }
   }
 
   setSpeechFrame(frame: SpeechMotionFrame): void {

@@ -19,6 +19,15 @@ describe('character settings', () => {
       speechVolume: 1,
       aiMotionEnabled: true,
       enabledAiMotionIds: ['idle', 'greeting', 'talking'],
+      llmBaseUrl: 'http://127.0.0.1:11434/v1',
+      llmModel: 'qwen2.5:7b',
+      embeddingBaseUrl: 'http://127.0.0.1:11434/v1',
+      embeddingModel: 'nomic-embed-text',
+      embeddingDimensions: 768,
+      memoryEnabled: true,
+      memoryRecallEnabled: true,
+      memoryWriteEnabled: true,
+      memoryRecallLimit: 6,
     });
   });
 
@@ -66,5 +75,31 @@ describe('character settings', () => {
     expect(
       characterSettingsSchema.safeParse({ enabledAiMotionIds: ['unknown'] }).success,
     ).toBe(false);
+  });
+
+  it('rejects non-loopback Brain endpoints', () => {
+    expect(
+      characterSettingsSchema.safeParse({ llmBaseUrl: 'https://api.example.com/v1' })
+        .success,
+    ).toBe(false);
+    expect(
+      characterSettingsSchema.safeParse({
+        embeddingBaseUrl: 'http://192.168.1.20:11434/v1',
+      }).success,
+    ).toBe(false);
+    expect(
+      characterSettingsSchema.safeParse({
+        llmBaseUrl: 'http://127.999.1.1:11434/v1',
+      }).success,
+    ).toBe(false);
+    expect(
+      characterSettingsSchema.safeParse({ llmBaseUrl: 'http://localhost:11434/v1' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects unsupported embedding dimensions', () => {
+    expect(characterSettingsSchema.safeParse({ embeddingDimensions: 63 }).success).toBe(false);
+    expect(characterSettingsSchema.safeParse({ embeddingDimensions: 8193 }).success).toBe(false);
   });
 });

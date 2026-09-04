@@ -19,6 +19,41 @@ export const DEFAULT_SPEECH_SETTINGS = {
   speechVolume: 1,
 } as const;
 
+export const DEFAULT_BRAIN_SETTINGS = {
+  llmBaseUrl: 'http://127.0.0.1:11434/v1',
+  llmModel: 'qwen2.5:7b',
+  embeddingBaseUrl: 'http://127.0.0.1:11434/v1',
+  embeddingModel: 'nomic-embed-text',
+  embeddingDimensions: 768,
+  memoryEnabled: true,
+  memoryRecallEnabled: true,
+  memoryWriteEnabled: true,
+  memoryRecallLimit: 6,
+} as const;
+
+function localEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const ipv4 = url.hostname.split('.').map(Number);
+    const isIpv4Loopback =
+      ipv4.length === 4 &&
+      ipv4[0] === 127 &&
+      ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+    return (
+      url.protocol === 'http:' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      (url.hostname === 'localhost' ||
+        url.hostname === '[::1]' ||
+        isIpv4Loopback)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const characterSettingsSchema = z.object({
   characterModelId: z.string().trim().min(1).max(128).default(DEFAULT_CHARACTER_MODEL_ID),
   displayName: z.string().trim().min(1).max(32).default('陵光'),
@@ -60,8 +95,40 @@ export const characterSettingsSchema = z.object({
     .array(z.enum(AI_MOTION_IDS))
     .max(AI_MOTION_IDS.length)
     .default([...DEFAULT_AI_MOTION_IDS]),
-  apiBaseUrl: z.string().trim().max(2048).default(''),
-  apiModel: z.string().trim().max(128).default(''),
+  llmBaseUrl: z
+    .string()
+    .trim()
+    .max(2048)
+    .refine(localEndpoint, 'LLM 地址必须是本机 HTTP 回环地址')
+    .default(DEFAULT_BRAIN_SETTINGS.llmBaseUrl),
+  llmModel: z.string().trim().min(1).max(128).default(DEFAULT_BRAIN_SETTINGS.llmModel),
+  embeddingBaseUrl: z
+    .string()
+    .trim()
+    .max(2048)
+    .refine(localEndpoint, 'Embedding 地址必须是本机 HTTP 回环地址')
+    .default(DEFAULT_BRAIN_SETTINGS.embeddingBaseUrl),
+  embeddingModel: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .default(DEFAULT_BRAIN_SETTINGS.embeddingModel),
+  embeddingDimensions: z
+    .number()
+    .int()
+    .min(64)
+    .max(8192)
+    .default(DEFAULT_BRAIN_SETTINGS.embeddingDimensions),
+  memoryEnabled: z.boolean().default(DEFAULT_BRAIN_SETTINGS.memoryEnabled),
+  memoryRecallEnabled: z.boolean().default(DEFAULT_BRAIN_SETTINGS.memoryRecallEnabled),
+  memoryWriteEnabled: z.boolean().default(DEFAULT_BRAIN_SETTINGS.memoryWriteEnabled),
+  memoryRecallLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .default(DEFAULT_BRAIN_SETTINGS.memoryRecallLimit),
 });
 
 export type CharacterSettings = z.infer<typeof characterSettingsSchema>;

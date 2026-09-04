@@ -5,12 +5,13 @@ import {
 } from '../character/animation/MotionCatalog';
 import {
   characterSettingsSchema,
+  DEFAULT_BRAIN_SETTINGS,
   DEFAULT_COLOR_SETTINGS,
   DEFAULT_SPEECH_SETTINGS,
   type CharacterSettings,
 } from './CharacterSettings';
 
-type SettingsPage = 'character' | 'voice' | 'motion';
+type SettingsPage = 'character' | 'voice' | 'motion' | 'brain';
 
 interface SettingsPanelOptions {
   initialSettings: CharacterSettings;
@@ -27,7 +28,9 @@ function requiredElement<T extends Element>(root: ParentNode, selector: string):
 }
 
 function parseSettingsPage(value: string | undefined): SettingsPage | undefined {
-  if (value === 'character' || value === 'voice' || value === 'motion') return value;
+  if (value === 'character' || value === 'voice' || value === 'motion' || value === 'brain') {
+    return value;
+  }
   return undefined;
 }
 
@@ -128,16 +131,31 @@ export class SettingsPanel {
       .forEach((input) => {
         input.checked = this.settings.enabledAiMotionIds.includes(input.value as AiMotionId);
       });
-    requiredElement<HTMLInputElement>(this.form, '[name="apiBaseUrl"]').value =
-      this.settings.apiBaseUrl;
-    requiredElement<HTMLInputElement>(this.form, '[name="apiModel"]').value =
-      this.settings.apiModel;
+    requiredElement<HTMLInputElement>(this.form, '[name="llmBaseUrl"]').value =
+      this.settings.llmBaseUrl;
+    requiredElement<HTMLInputElement>(this.form, '[name="llmModel"]').value =
+      this.settings.llmModel;
+    requiredElement<HTMLInputElement>(this.form, '[name="embeddingBaseUrl"]').value =
+      this.settings.embeddingBaseUrl;
+    requiredElement<HTMLInputElement>(this.form, '[name="embeddingModel"]').value =
+      this.settings.embeddingModel;
+    requiredElement<HTMLInputElement>(this.form, '[name="embeddingDimensions"]').value =
+      String(this.settings.embeddingDimensions);
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryEnabled"]').checked =
+      this.settings.memoryEnabled;
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallEnabled"]').checked =
+      this.settings.memoryRecallEnabled;
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryWriteEnabled"]').checked =
+      this.settings.memoryWriteEnabled;
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallLimit"]').value =
+      String(this.settings.memoryRecallLimit);
 
     this.scaleOutput.value = this.settings.scale.toFixed(2);
     this.updateCharacterModelSummary();
     this.updateColorOutputs();
     this.updateSpeechControls();
     this.updateMotionControls();
+    this.updateBrainControls();
   }
 
   private parseForm() {
@@ -168,8 +186,15 @@ export class SettingsPanel {
       ),
       aiMotionEnabled: data.get('aiMotionEnabled') === 'on',
       enabledAiMotionIds: data.getAll('enabledAiMotionIds').map(String),
-      apiBaseUrl: String(data.get('apiBaseUrl') ?? ''),
-      apiModel: String(data.get('apiModel') ?? ''),
+      llmBaseUrl: String(data.get('llmBaseUrl') ?? ''),
+      llmModel: String(data.get('llmModel') ?? ''),
+      embeddingBaseUrl: String(data.get('embeddingBaseUrl') ?? ''),
+      embeddingModel: String(data.get('embeddingModel') ?? ''),
+      embeddingDimensions: Number(data.get('embeddingDimensions')),
+      memoryEnabled: data.get('memoryEnabled') === 'on',
+      memoryRecallEnabled: data.get('memoryRecallEnabled') === 'on',
+      memoryWriteEnabled: data.get('memoryWriteEnabled') === 'on',
+      memoryRecallLimit: Number(data.get('memoryRecallLimit')),
     });
   }
 
@@ -213,6 +238,9 @@ export class SettingsPanel {
     }
     if (target instanceof HTMLInputElement && target.dataset.motionSetting !== undefined) {
       this.updateMotionControls();
+    }
+    if (target instanceof HTMLInputElement && target.dataset.brainSetting !== undefined) {
+      this.updateBrainControls();
     }
     if (target instanceof HTMLSelectElement && target.name === 'characterModelId') {
       this.updateCharacterModelSummary();
@@ -400,6 +428,27 @@ export class SettingsPanel {
       });
   }
 
+  private updateBrainControls(): void {
+    const enabled = requiredElement<HTMLInputElement>(
+      this.form,
+      '[name="memoryEnabled"]',
+    ).checked;
+    this.form
+      .querySelectorAll<HTMLInputElement>('[data-memory-control]')
+      .forEach((control) => {
+        control.disabled = !enabled;
+      });
+  }
+
+  private resetBrainSettings(): void {
+    for (const [name, value] of Object.entries(DEFAULT_BRAIN_SETTINGS)) {
+      const input = requiredElement<HTMLInputElement>(this.form, '[name="' + name + '"]');
+      if (typeof value === 'boolean') input.checked = value;
+      else input.value = String(value);
+    }
+    this.updateBrainControls();
+  }
+
   private resetSpeechSettings(): void {
     requiredElement<HTMLInputElement>(this.form, '[name="speechEnabled"]').checked =
       DEFAULT_SPEECH_SETTINGS.speechEnabled;
@@ -496,6 +545,10 @@ export class SettingsPanel {
       }
       if (target.closest('[data-reset-colors]')) {
         this.resetColorSettings();
+        return;
+      }
+      if (target.closest('[data-reset-brain]')) {
+        this.resetBrainSettings();
         return;
       }
       if (target.closest('[data-settings-close]')) {

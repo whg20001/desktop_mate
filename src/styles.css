@@ -89,6 +89,49 @@ body {
   backdrop-filter: blur(14px);
 }
 
+#conversation-panel {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: 7%;
+  width: min(78%, 430px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgb(255 255 255 / 72%);
+  border-radius: 15px;
+  background: rgb(248 252 255 / 92%);
+  box-shadow: 0 10px 30px rgb(24 45 73 / 22%);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+#conversation-panel[hidden] {
+  display: none;
+}
+
+#conversation-panel input {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid #c8d7e7;
+  border-radius: 9px;
+  outline: none;
+  color: #26364b;
+  background: #fff;
+  font: inherit;
+  user-select: text;
+}
+
+#conversation-panel button {
+  padding: 8px 13px;
+  border: 1px solid #4d759f;
+  border-radius: 9px;
+  color: #fff;
+  background: #5e86b1;
+  font: inherit;
+}
+
 
 
 #settings-panel {
@@ -160,6 +203,17 @@ body {
   background: #eff5fb;
   font-size: 11px;
   font-weight: 700;
+}
+
+.settings-status-badge[data-kind="ready"] {
+  color: #397051;
+  background: #e7f5ed;
+}
+
+.settings-status-badge[data-kind="degraded"],
+.settings-status-badge[data-kind="failed"] {
+  color: #965b68;
+  background: #f9e9ee;
 }
 
 #settings-form {
@@ -712,4 +766,59 @@ body.settings-window {
     margin-top: 8px;
     text-align: left;
   }
+}
+
+.memory-manager-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d9e3ee;
+  border-radius: 15px;
+  background: rgb(255 255 255 / 78%);
+}
+
+.memory-manager-card > header,
+.memory-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-manager-card h3 {
+  margin: 0;
+  color: #30455f;
+  font-size: 13px;
+}
+
+.memory-list {
+  display: grid;
+  gap: 9px;
+}
+
+.memory-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d8e2ed;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.memory-item textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 62px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid #ccd9e7;
+  border-radius: 9px;
+  color: #354b65;
+  font: inherit;
+  user-select: text;
+}
+
+.memory-delete-button {
+  color: #964f5c;
+  border-color: #e2bec6;
 }

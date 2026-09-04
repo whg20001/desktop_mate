@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { CharacterState } from '../../ipc/schemas';
+import type { EmotionKind } from '../../behavior/BehaviorTypes';
 import type { SpeechMotionFrame } from '../../speech/SpeechTypes';
 import type { CharacterBoneRole } from '../mmd/BoneMap';
 import type { CharacterMorphRole } from '../mmd/MorphMap';
@@ -26,6 +27,9 @@ export class MotionController {
   private speechFrame: SpeechMotionFrame = { active: false, level: 0 };
   private mouthWeight = 0;
   private smileWeight = 0;
+  private emotionKind: EmotionKind = 'neutral';
+  private emotionIntensity = 0;
+  private emotionRemaining = 0;
   private breathingEnabled = false;
   private dragX = 0;
   private dragY = 0;
@@ -62,6 +66,9 @@ export class MotionController {
     this.speechFrame = { active: false, level: 0 };
     this.mouthWeight = 0;
     this.smileWeight = 0;
+    this.emotionKind = 'neutral';
+    this.emotionIntensity = 0;
+    this.emotionRemaining = 0;
     this.idleHeadTilt = 0;
     this.idleHeadTarget = 0;
     this.idleHeadHold = 2.4;
@@ -105,12 +112,23 @@ export class MotionController {
     this.breathingEnabled = enabled;
   }
 
+  setEmotion(kind: EmotionKind, intensity: number, durationSeconds: number): void {
+    this.emotionKind = kind;
+    this.emotionIntensity = THREE.MathUtils.clamp(intensity, 0, 1);
+    this.emotionRemaining = THREE.MathUtils.clamp(durationSeconds, 0.25, 10);
+  }
+
   update(delta: number): void {
     const step = THREE.MathUtils.clamp(delta, 0, 0.1);
     this.elapsed += step;
     this.greetingElapsed = Math.min(this.greetingElapsed + step, GREETING_SECONDS);
     this.landingElapsed = Math.min(this.landingElapsed + step, LANDING_SECONDS);
     this.talkingRemaining = Math.max(this.talkingRemaining - step, 0);
+    this.emotionRemaining = Math.max(this.emotionRemaining - step, 0);
+    if (this.emotionRemaining === 0) {
+      this.emotionKind = 'neutral';
+      this.emotionIntensity = 0;
+    }
 
     this.updateIdleHead(step);
     if (this.mode !== 'dragged') {
@@ -205,9 +223,17 @@ export class MotionController {
       );
     }
 
+    const emotionWeight = this.emotionRemaining > 0 ? this.emotionIntensity : 0;
+    if (this.emotionKind === 'curious') {
+      neckZ += THREE.MathUtils.degToRad(2.2) * emotionWeight;
+    } else if (this.emotionKind === 'concerned' || this.emotionKind === 'sad') {
+      neckX += THREE.MathUtils.degToRad(1.4) * emotionWeight;
+    }
+
     const smileTarget = Math.max(
       greetingWeight * 0.5,
       talking ? 0.13 + Math.sin(this.elapsed * Math.PI * 1.7) * 0.04 : 0,
+      this.emotionKind === 'happy' ? emotionWeight * 0.55 : 0,
     );
     this.smileWeight = THREE.MathUtils.lerp(
       this.smileWeight,

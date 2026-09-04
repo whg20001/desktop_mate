@@ -1,4 +1,7 @@
 import { CharacterRuntime } from '../character/CharacterRuntime';
+import { BehaviorPlanner } from '../behavior/BehaviorPlanner';
+import { BrainBridge } from '../brain/BrainBridge';
+import { brainSettingsFromCharacter } from '../brain/BrainSettings';
 import { getCharacterCatalogEntry } from '../character/CharacterCatalog';
 import {
   loadCharacterSettings,
@@ -14,6 +17,7 @@ import { SpeechController } from '../speech/SpeechController';
 import { WebSpeechEngine } from '../speech/WebSpeechEngine';
 import type { SpeechSource } from '../speech/SpeechTypes';
 import { SpeechBubble } from '../ui/SpeechBubble';
+import { ConversationPanel } from '../ui/ConversationPanel';
 
 function requiredElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -26,6 +30,8 @@ export async function bootstrap(): Promise<() => void> {
   const status = requiredElement<HTMLDivElement>('#status');
   const statusText = requiredElement<HTMLSpanElement>('[data-status-text]');
   const speech = new SpeechBubble(requiredElement<HTMLDivElement>('#speech-bubble'));
+  const brain = new BrainBridge();
+  const behavior = new BehaviorPlanner();
   let settings = loadCharacterSettings();
   const characterModel = getCharacterCatalogEntry(settings.characterModelId);
   const manifestUrl = characterModel.manifestUrl;
@@ -34,6 +40,9 @@ export async function bootstrap(): Promise<() => void> {
 
   statusText.textContent = '正在连接 Windows 桌面…';
   await bridge.connect();
+  void brain.configure(brainSettingsFromCharacter(settings)).catch((error: unknown) => {
+    console.warn('[brain configuration]', error instanceof Error ? error.message : '配置失败');
+  });
 
   statusText.textContent = `正在加载${characterModel.displayName}模型…`;
   const manifest = await loadModelManifest(manifestUrl);
@@ -41,6 +50,10 @@ export async function bootstrap(): Promise<() => void> {
   const report = await character.load(resolveAssetUrl(manifestUrl, manifest.model));
   character.applySettings(settings);
   const voice = new SpeechController(new WebSpeechEngine(), character);
+  const sessionId =
+    window.sessionStorage.getItem('desktop-companion.conversation-session') ??
+    crypto.randomUUID();
+  window.sessionStorage.setItem('desktop-companion.conversation-session', sessionId);
   const speakWithSettings = (
     text: string,
     source: SpeechSource,
@@ -100,6 +113,7 @@ export async function bootstrap(): Promise<() => void> {
       const message = '嗯？我在这里。';
       character.reactToClick();
       speech.show(settings.displayName + '：' + message);
+      conversation.focus();
       if (settings.speechEnabled) {
         void speakWithSettings(message, 'interaction').catch((error: unknown) => {
           character.talk(1.6);
@@ -112,6 +126,33 @@ export async function bootstrap(): Promise<() => void> {
         const message = error instanceof Error ? error.message : '无法打开设置窗口';
         speech.show(`${settings.displayName}：${message}`);
       });
+    },
+  );
+  const conversation = new ConversationPanel(
+    requiredElement<HTMLFormElement>('#conversation-panel'),
+    async (userInput) => {
+      speech.show(settings.displayName + '：正在思考…', 30_000);
+      try {
+        const response = await brain.converse(
+          userInput,
+          {
+            userId: 'local-user',
+            characterId: settings.characterModelId,
+            sessionId,
+          },
+          settings.aiMotionEnabled ? settings.enabledAiMotionIds : [],
+        );
+        speech.show(settings.displayName + '：' + response.text, 6_000);
+        character.applyBehavior(behavior.resolve(response, settings));
+        if (settings.speechEnabled && response.speech?.text) {
+          void speakWithSettings(response.speech.text, 'ai').catch((error: unknown) => {
+            console.warn('[speech]', error instanceof Error ? error.message : '播放失败');
+          });
+        }
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Brain 当前不可用';
+        speech.show(settings.displayName + '：' + message, 5_000);
+      }
     },
   );
   pointer.attach();
@@ -128,6 +169,7 @@ export async function bootstrap(): Promise<() => void> {
   return () => {
     window.removeEventListener('resize', onResize);
     pointer.detach();
+    conversation.dispose();
     stopSettingsSync();
     voice.dispose();
     loop.stop();

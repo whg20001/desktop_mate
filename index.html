@@ -12,7 +12,16 @@
       <span data-status-text>正在唤醒陵光…</span>
     </div>
     <div id="speech-bubble" hidden></div>
+    <form id="conversation-panel" hidden aria-label="与桌面助手对话">
+      <input
+        data-conversation-input
+        maxlength="16000"
+        autocomplete="off"
+        placeholder="输入消息…"
+        aria-label="消息"
+      />
+      <button data-conversation-submit type="submit">发送</button>
+    </form>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-

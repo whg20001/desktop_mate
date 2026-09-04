@@ -6,3 +6,6 @@ src-tauri/target/
 .idea/
 .vscode/
 .cache/
+brain-sidecar/.venv/
+brain-sidecar/.pytest_cache/
+brain-sidecar/**/__pycache__/

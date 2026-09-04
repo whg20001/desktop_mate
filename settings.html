@@ -67,6 +67,22 @@
                   <small>动作库与 AI 场景权限</small>
                 </span>
               </button>
+              <button
+                id="settings-tab-brain"
+                class="settings-nav-item"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="settings-page-brain"
+                data-settings-tab="brain"
+                tabindex="-1"
+              >
+                <span class="settings-nav-index">04</span>
+                <span>
+                  <strong>Brain 与记忆</strong>
+                  <small>本地模型、Mem0 与隐私</small>
+                </span>
+              </button>
               <p class="settings-navigation-note">
                 配置窗口与角色窗口独立显示，不会遮挡桌面角色。
               </p>
@@ -156,20 +172,13 @@
                   </div>
                 </fieldset>
 
-                <fieldset class="settings-section">
-                  <legend>AI 连接预设</legend>
-                  <div class="settings-field-grid">
-                    <label>
-                      <span>Base URL</span>
-                      <input name="apiBaseUrl" type="url" placeholder="https://api.example.com/v1" autocomplete="off" />
-                    </label>
-                    <label>
-                      <span>模型名称</span>
-                      <input name="apiModel" placeholder="model-name" autocomplete="off" />
-                    </label>
+                <article class="settings-info-card">
+                  <span class="settings-info-icon">i</span>
+                  <div>
+                    <h3>角色与 Brain 分离</h3>
+                    <p>模型渲染不直接访问 LLM。对话和记忆配置位于“Brain 与记忆”页面。</p>
                   </div>
-                  <p class="settings-note">当前仅保存非敏感参数；Provider 接入前不会发起请求，API Key 不会在此保存。</p>
-                </fieldset>
+                </article>
               </section>
 
               <section
@@ -307,6 +316,110 @@
                   <button type="button" class="settings-utility-button" disabled title="等待 VMD Loader 接入">
                     VMD 导入（待接入）
                   </button>
+                </section>
+              </section>
+
+              <section
+                id="settings-page-brain"
+                class="settings-page"
+                role="tabpanel"
+                aria-labelledby="settings-tab-brain"
+                data-settings-page="brain"
+                hidden
+              >
+                <header class="settings-page-header">
+                  <div>
+                    <p class="settings-page-kicker">LOCAL BRAIN</p>
+                    <h2>Brain 与记忆</h2>
+                  </div>
+                  <p>所有对话、Embedding、Mem0 和数据均留在本机；配置无效时系统会直接拒绝请求。</p>
+                </header>
+
+                <fieldset class="settings-section">
+                  <legend>本地 LLM</legend>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>OpenAI 兼容 Base URL</span>
+                      <input name="llmBaseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" autocomplete="off" required />
+                    </label>
+                    <label>
+                      <span>模型名称</span>
+                      <input name="llmModel" placeholder="qwen2.5:7b" maxlength="128" autocomplete="off" required />
+                    </label>
+                  </div>
+                  <p class="settings-note">仅接受 HTTP 回环地址：127.0.0.0/8、localhost 或 ::1，不允许云端和局域网地址。</p>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>本地 Embedding</legend>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>OpenAI 兼容 Base URL</span>
+                      <input name="embeddingBaseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" autocomplete="off" required />
+                    </label>
+                    <label>
+                      <span>Embedding 模型</span>
+                      <input name="embeddingModel" placeholder="nomic-embed-text" maxlength="128" autocomplete="off" required />
+                    </label>
+                    <label>
+                      <span>向量维度</span>
+                      <input name="embeddingDimensions" type="number" min="64" max="8192" step="1" required />
+                    </label>
+                  </div>
+                  <p class="settings-note">维度必须与模型输出一致；nomic-embed-text 默认填写 768。</p>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>Mem0 与隐私</legend>
+                  <label class="toggle-row settings-master-toggle">
+                    <input name="memoryEnabled" data-brain-setting type="checkbox" />
+                    <span>
+                      <strong>启用本地长期记忆</strong>
+                      <small>使用本机 Mem0、SQLite 与嵌入式 Qdrant，不连接 Mem0 云服务。</small>
+                    </span>
+                  </label>
+                  <div class="settings-toggle-grid">
+                    <label class="toggle-row">
+                      <input name="memoryRecallEnabled" data-memory-control type="checkbox" />
+                      <span>回答前召回相关记忆</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input name="memoryWriteEnabled" data-memory-control type="checkbox" />
+                      <span>回答后自动形成记忆</span>
+                    </label>
+                  </div>
+                  <label>
+                    <span>单次召回上限</span>
+                    <input name="memoryRecallLimit" data-memory-control type="number" min="1" max="20" step="1" />
+                  </label>
+                  <div class="color-controls-footer">
+                    <p class="settings-note">会话、向量和脱敏日志固定写入本机应用数据目录；日志不记录原始对话、Prompt、令牌或记忆正文。</p>
+                    <button type="button" class="settings-utility-button" data-reset-brain>恢复本地默认</button>
+                  </div>
+                </fieldset>
+
+                <article class="settings-info-card">
+                  <span class="settings-info-icon">i</span>
+                  <div>
+                    <h3>Fail closed</h3>
+                    <p>本地 LLM、Embedding 或 Mem0 不可用时 Brain 显示为“降级”，不会自动回退到任何云端 Provider。</p>
+                  </div>
+                </article>
+
+                <section class="memory-manager-card" aria-labelledby="memory-manager-title">
+                  <header>
+                    <div>
+                      <p class="settings-page-kicker">MEMORY MANAGER</p>
+                      <h3 id="memory-manager-title">已保存的长期记忆</h3>
+                    </div>
+                    <button type="button" class="settings-utility-button" data-refresh-memories>
+                      刷新列表
+                    </button>
+                  </header>
+                  <p class="settings-note">可以在本机查看、修正或删除 Mem0 中的记忆。操作不会发送到云端。</p>
+                  <div class="memory-list" data-memory-list>
+                    <p class="settings-note">点击“刷新列表”读取当前角色的长期记忆。</p>
+                  </div>
                 </section>
               </section>
             </main>
