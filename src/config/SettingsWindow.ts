@@ -67,7 +67,7 @@ export async function openSettingsWindow(): Promise<void> {
     const popup = window.open(
       '/settings.html',
       SETTINGS_WINDOW_LABEL,
-      'popup=yes,width=560,height=780,left=' + left + ',top=' + window.screenY,
+      'popup=yes,width=960,height=720,left=' + left + ',top=' + window.screenY,
     );
     if (!popup) throw new Error('设置窗口被浏览器拦截');
     popup.focus();

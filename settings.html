@@ -3,143 +3,321 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>角色配置</title>
+    <title>助手配置中心</title>
   </head>
   <body class="settings-window">
-    <section id="settings-panel" aria-label="角色配置">
+    <section id="settings-panel" aria-label="助手配置中心">
       <div class="settings-card" aria-labelledby="settings-title">
         <header class="settings-header">
           <div>
-            <p class="settings-eyebrow">CHARACTER SETTINGS</p>
-            <h1 id="settings-title">角色配置</h1>
+            <p class="settings-eyebrow">DESKTOP COMPANION</p>
+            <h1 id="settings-title">助手配置中心</h1>
+            <p class="settings-subtitle">管理当前角色、声音和动作能力</p>
           </div>
+          <span class="settings-status-badge">调试模式</span>
         </header>
+
         <form id="settings-form">
-          <fieldset>
-            <legend>基础设置</legend>
-            <label>
-              <span>角色名称</span>
-              <input name="displayName" maxlength="32" required autocomplete="off" />
-            </label>
-            <label>
-              <span>显示比例 <output data-scale-output>1.00</output></span>
-              <input name="scale" type="range" min="0.75" max="1.25" step="0.05" />
-            </label>
-            <label class="toggle-row">
-              <input name="followCursor" type="checkbox" />
-              <span>头部跟随鼠标</span>
-            </label>
-            <label class="toggle-row">
-              <input name="breathing" type="checkbox" />
-              <span>呼吸动画（默认关闭）</span>
-            </label>
-          </fieldset>
-          <fieldset class="color-controls">
-            <legend>色彩调节</legend>
-            <label class="color-control">
-              <span class="range-heading">
-                <span>暗部环境色</span>
-                <output data-value-for="materialAmbientScale">0.25</output>
-              </span>
-              <input name="materialAmbientScale" data-color-setting type="range" min="0" max="1" step="0.05" />
-              <small>越低黑色越深，越高暗部越柔和。</small>
-            </label>
-            <label class="color-control">
-              <span class="range-heading">
-                <span>环境补光</span>
-                <output data-value-for="hemisphereLightIntensity">0.30</output>
-              </span>
-              <input name="hemisphereLightIntensity" data-color-setting type="range" min="0" max="2" step="0.05" />
-              <small>调节阴影区域的整体明暗。</small>
-            </label>
-            <label class="color-control">
-              <span class="range-heading">
-                <span>主光强度</span>
-                <output data-value-for="directionalLightIntensity">1.10</output>
-              </span>
-              <input name="directionalLightIntensity" data-color-setting type="range" min="0" max="4" step="0.05" />
-              <small>调节皮肤、头发和衣料的亮部强度。</small>
-            </label>
-            <div class="color-controls-footer">
-              <p class="settings-note">拖动时实时预览；取消会恢复，保存后下次启动继续使用。</p>
-              <button type="button" class="color-reset-button" data-reset-colors>恢复推荐色彩</button>
+          <div class="settings-workspace">
+            <nav class="settings-navigation" role="tablist" aria-label="配置菜单" aria-orientation="vertical">
+              <button
+                id="settings-tab-character"
+                class="settings-nav-item is-active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="settings-page-character"
+                data-settings-tab="character"
+              >
+                <span class="settings-nav-index">01</span>
+                <span>
+                  <strong>助手模型</strong>
+                  <small>角色、外观与连接预设</small>
+                </span>
+              </button>
+              <button
+                id="settings-tab-voice"
+                class="settings-nav-item"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="settings-page-voice"
+                data-settings-tab="voice"
+                tabindex="-1"
+              >
+                <span class="settings-nav-index">02</span>
+                <span>
+                  <strong>声音配置</strong>
+                  <small>音色、语言与播放参数</small>
+                </span>
+              </button>
+              <button
+                id="settings-tab-motion"
+                class="settings-nav-item"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="settings-page-motion"
+                data-settings-tab="motion"
+                tabindex="-1"
+              >
+                <span class="settings-nav-index">03</span>
+                <span>
+                  <strong>动作配置</strong>
+                  <small>动作库与 AI 场景权限</small>
+                </span>
+              </button>
+              <p class="settings-navigation-note">
+                配置窗口与角色窗口独立显示，不会遮挡桌面角色。
+              </p>
+            </nav>
+
+            <main class="settings-pages">
+              <section
+                id="settings-page-character"
+                class="settings-page"
+                role="tabpanel"
+                aria-labelledby="settings-tab-character"
+                data-settings-page="character"
+              >
+                <header class="settings-page-header">
+                  <div>
+                    <p class="settings-page-kicker">CHARACTER</p>
+                    <h2>助手模型</h2>
+                  </div>
+                  <p>选择桌面角色并调整显示效果。新增角色时只需注册模型清单。</p>
+                </header>
+
+                <fieldset class="settings-section model-picker">
+                  <legend>当前助手模型</legend>
+                  <label>
+                    <span>角色模型</span>
+                    <select name="characterModelId" data-character-model-select></select>
+                  </label>
+                  <article class="model-summary" data-character-model-summary aria-live="polite"></article>
+                  <p class="settings-note">切换模型保存后，在下次启动角色窗口时生效。</p>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>基础设置</legend>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>角色名称</span>
+                      <input name="displayName" maxlength="32" required autocomplete="off" />
+                    </label>
+                    <label>
+                      <span>显示比例 <output data-scale-output>1.00</output></span>
+                      <input name="scale" type="range" min="0.75" max="1.25" step="0.05" />
+                    </label>
+                  </div>
+                  <div class="settings-toggle-grid">
+                    <label class="toggle-row">
+                      <input name="followCursor" type="checkbox" />
+                      <span>头部跟随鼠标</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input name="breathing" type="checkbox" />
+                      <span>呼吸动画（默认关闭）</span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset class="settings-section color-controls">
+                  <legend>色彩调节</legend>
+                  <div class="settings-field-grid settings-field-grid--three">
+                    <label class="color-control">
+                      <span class="range-heading">
+                        <span>暗部环境色</span>
+                        <output data-value-for="materialAmbientScale">0.25</output>
+                      </span>
+                      <input name="materialAmbientScale" data-color-setting type="range" min="0" max="1" step="0.05" />
+                      <small>越低黑色越深，越高暗部越柔和。</small>
+                    </label>
+                    <label class="color-control">
+                      <span class="range-heading">
+                        <span>环境补光</span>
+                        <output data-value-for="hemisphereLightIntensity">0.30</output>
+                      </span>
+                      <input name="hemisphereLightIntensity" data-color-setting type="range" min="0" max="2" step="0.05" />
+                      <small>调节阴影区域的整体明暗。</small>
+                    </label>
+                    <label class="color-control">
+                      <span class="range-heading">
+                        <span>主光强度</span>
+                        <output data-value-for="directionalLightIntensity">1.10</output>
+                      </span>
+                      <input name="directionalLightIntensity" data-color-setting type="range" min="0" max="4" step="0.05" />
+                      <small>调节皮肤、头发和衣料的亮部强度。</small>
+                    </label>
+                  </div>
+                  <div class="color-controls-footer">
+                    <p class="settings-note">拖动时实时预览；取消会恢复，保存后继续使用。</p>
+                    <button type="button" class="color-reset-button" data-reset-colors>恢复推荐色彩</button>
+                  </div>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>AI 连接预设</legend>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>Base URL</span>
+                      <input name="apiBaseUrl" type="url" placeholder="https://api.example.com/v1" autocomplete="off" />
+                    </label>
+                    <label>
+                      <span>模型名称</span>
+                      <input name="apiModel" placeholder="model-name" autocomplete="off" />
+                    </label>
+                  </div>
+                  <p class="settings-note">当前仅保存非敏感参数；Provider 接入前不会发起请求，API Key 不会在此保存。</p>
+                </fieldset>
+              </section>
+
+              <section
+                id="settings-page-voice"
+                class="settings-page"
+                role="tabpanel"
+                aria-labelledby="settings-tab-voice"
+                data-settings-page="voice"
+                hidden
+              >
+                <header class="settings-page-header">
+                  <div>
+                    <p class="settings-page-kicker">VOICE</p>
+                    <h2>声音配置</h2>
+                  </div>
+                  <p>所有试听和后续 AI 回复共用角色窗口中的 SpeechController。</p>
+                </header>
+
+                <fieldset class="settings-section speech-controls">
+                  <legend>语音输出</legend>
+                  <label class="toggle-row settings-master-toggle">
+                    <input name="speechEnabled" data-speech-setting type="checkbox" />
+                    <span>
+                      <strong>启用角色语音</strong>
+                      <small>关闭后角色仍显示文字和动作，但不会播放声音。</small>
+                    </span>
+                  </label>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>系统音色</span>
+                      <select name="speechVoiceId" data-speech-control>
+                        <option value="">跟随系统默认</option>
+                      </select>
+                      <small>音色来自 Windows WebView2 可用的系统语音。</small>
+                    </label>
+                    <label>
+                      <span>语言</span>
+                      <input
+                        name="speechLanguage"
+                        data-speech-control
+                        list="speech-language-options"
+                        maxlength="35"
+                        placeholder="zh-CN"
+                        autocomplete="off"
+                      />
+                      <datalist id="speech-language-options">
+                        <option value="zh-CN"></option>
+                        <option value="zh-TW"></option>
+                        <option value="ja-JP"></option>
+                        <option value="en-US"></option>
+                      </datalist>
+                    </label>
+                  </div>
+                  <div class="settings-field-grid settings-field-grid--three">
+                    <label class="speech-control">
+                      <span class="range-heading">
+                        <span>音量</span>
+                        <output data-value-for="speechVolume">1.00</output>
+                      </span>
+                      <input name="speechVolume" data-speech-setting data-speech-control type="range" min="0" max="1" step="0.05" />
+                    </label>
+                    <label class="speech-control">
+                      <span class="range-heading">
+                        <span>语速</span>
+                        <output data-value-for="speechRate">1.00</output>
+                      </span>
+                      <input name="speechRate" data-speech-setting data-speech-control type="range" min="0.5" max="2" step="0.05" />
+                    </label>
+                    <label class="speech-control">
+                      <span class="range-heading">
+                        <span>音调</span>
+                        <output data-value-for="speechPitch">1.00</output>
+                      </span>
+                      <input name="speechPitch" data-speech-setting data-speech-control type="range" min="0" max="2" step="0.05" />
+                    </label>
+                  </div>
+                  <div class="speech-controls-footer">
+                    <p class="settings-note">试听不会保存；保存后用于角色问候和后续 AI 语音。</p>
+                    <div class="speech-actions">
+                      <button type="button" class="settings-utility-button" data-reset-speech>恢复默认</button>
+                      <button type="button" class="settings-utility-button" data-preview-voice>试听声音</button>
+                    </div>
+                  </div>
+                </fieldset>
+
+                <article class="settings-info-card">
+                  <span class="settings-info-icon">i</span>
+                  <div>
+                    <h3>模块保持独立</h3>
+                    <p>声音页只保存非敏感播放参数。真实 TTS Provider 与密钥仍由 Rust 后端管理，动作层只接收播放生命周期和嘴型帧。</p>
+                  </div>
+                </article>
+              </section>
+
+              <section
+                id="settings-page-motion"
+                class="settings-page"
+                role="tabpanel"
+                aria-labelledby="settings-tab-motion"
+                data-settings-page="motion"
+                hidden
+              >
+                <header class="settings-page-header">
+                  <div>
+                    <p class="settings-page-kicker">MOTION</p>
+                    <h2>动作配置</h2>
+                  </div>
+                  <p>控制哪些表现动作可由 AI 按场景选择，物理安全动作始终由系统接管。</p>
+                </header>
+
+                <fieldset class="settings-section">
+                  <legend>AI 动作选择</legend>
+                  <label class="toggle-row settings-master-toggle">
+                    <input name="aiMotionEnabled" data-motion-setting type="checkbox" />
+                    <span>
+                      <strong>允许 AI 根据场景选择动作</strong>
+                      <small>AI 只能从下方已启用的表现动作中选择。</small>
+                    </span>
+                  </label>
+                  <div class="motion-library" data-ai-motion-list></div>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>系统物理动作</legend>
+                  <p class="settings-note">以下动作由桌面物理状态自动触发，AI 无法禁用或覆盖。</p>
+                  <div class="motion-library" data-system-motion-list></div>
+                </fieldset>
+
+                <section class="motion-import-card" aria-labelledby="motion-import-title">
+                  <div>
+                    <p class="settings-page-kicker">MOTION LIBRARY</p>
+                    <h3 id="motion-import-title">导入基础动作</h3>
+                    <p>已预留 VMD 动作源与场景标签契约。接入 VMD Loader、文件权限和骨骼重定向后，可在这里导入动作文件。</p>
+                  </div>
+                  <button type="button" class="settings-utility-button" disabled title="等待 VMD Loader 接入">
+                    VMD 导入（待接入）
+                  </button>
+                </section>
+              </section>
+            </main>
+          </div>
+
+          <footer class="settings-footer">
+            <p class="settings-feedback" data-settings-feedback role="status"></p>
+            <div class="settings-actions">
+              <button type="button" class="secondary-button" data-settings-close>取消</button>
+              <button type="submit" class="primary-button">保存全部配置</button>
             </div>
-          </fieldset>
-          <fieldset class="speech-controls">
-            <legend>声音设置</legend>
-            <label class="toggle-row">
-              <input name="speechEnabled" data-speech-setting type="checkbox" />
-              <span>启用角色语音</span>
-            </label>
-            <label>
-              <span>系统音色</span>
-              <select name="speechVoiceId" data-speech-control>
-                <option value="">跟随系统默认</option>
-              </select>
-              <small>音色来自 Windows WebView2 可用的系统语音。</small>
-            </label>
-            <label>
-              <span>语言</span>
-              <input
-                name="speechLanguage"
-                data-speech-control
-                list="speech-language-options"
-                maxlength="35"
-                placeholder="zh-CN"
-                autocomplete="off"
-              />
-              <datalist id="speech-language-options">
-                <option value="zh-CN"></option>
-                <option value="zh-TW"></option>
-                <option value="ja-JP"></option>
-                <option value="en-US"></option>
-              </datalist>
-            </label>
-            <label class="speech-control">
-              <span class="range-heading">
-                <span>音量</span>
-                <output data-value-for="speechVolume">1.00</output>
-              </span>
-              <input name="speechVolume" data-speech-setting data-speech-control type="range" min="0" max="1" step="0.05" />
-            </label>
-            <label class="speech-control">
-              <span class="range-heading">
-                <span>语速</span>
-                <output data-value-for="speechRate">1.00</output>
-              </span>
-              <input name="speechRate" data-speech-setting data-speech-control type="range" min="0.5" max="2" step="0.05" />
-            </label>
-            <label class="speech-control">
-              <span class="range-heading">
-                <span>音调</span>
-                <output data-value-for="speechPitch">1.00</output>
-              </span>
-              <input name="speechPitch" data-speech-setting data-speech-control type="range" min="0" max="2" step="0.05" />
-            </label>
-            <div class="speech-controls-footer">
-              <p class="settings-note">试听不会保存配置；点击“保存配置”后用于角色问候和后续 AI 语音。</p>
-              <div class="speech-actions">
-                <button type="button" class="settings-utility-button" data-reset-speech>恢复默认</button>
-                <button type="button" class="settings-utility-button" data-preview-voice>试听声音</button>
-              </div>
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>API 预设</legend>
-            <label>
-              <span>Base URL</span>
-              <input name="apiBaseUrl" type="url" placeholder="https://api.example.com/v1" autocomplete="off" />
-            </label>
-            <label>
-              <span>模型名称</span>
-              <input name="apiModel" placeholder="model-name" autocomplete="off" />
-            </label>
-            <p class="settings-note">当前仅保存非敏感连接参数；Provider 接入前不会发起请求，API Key 不会在此保存。</p>
-          </fieldset>
-          <p class="settings-feedback" data-settings-feedback role="status"></p>
-          <footer class="settings-actions">
-            <button type="button" class="secondary-button" data-settings-close>取消</button>
-            <button type="submit" class="primary-button">保存配置</button>
           </footer>
         </form>
       </div>

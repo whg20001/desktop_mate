@@ -3,7 +3,7 @@ import { chooseSettingsWindowPosition } from './SettingsWindow';
 
 describe('chooseSettingsWindowPosition', () => {
   const monitor = { x: 0, y: 0, width: 1920, height: 1080 };
-  const settings = { width: 560, height: 780 };
+  const settings = { width: 960, height: 720 };
 
   it('places settings to the right when there is enough space', () => {
     expect(
@@ -22,6 +22,6 @@ describe('chooseSettingsWindowPosition', () => {
         settings,
         monitor,
       ),
-    ).toEqual({ x: 670, y: 300 });
+    ).toEqual({ x: 270, y: 360 });
   });
 });

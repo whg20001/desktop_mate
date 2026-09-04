@@ -113,13 +113,13 @@ Vision
 | AI | Rust trait `AgentProvider`（OpenAI 兼容 API Key / OAuth，运行时可切换） |
 | Memory | Rust trait `MemoryProvider`（默认 SQLite，可替换为 mem0 / Zep / Letta 等） |
 | Vision（预留） | Rust trait `VisionProvider`（接口先行，默认不启用） |
-| TTS | 独立 Speech Adapter |
+| Audio Engine | `TtsProvider` + SFX + Playback + LipSync 帧契约（Provider 与密钥在 Rust 侧） |
 
 需要注意一个当前技术变化：
 
 Three.js 在 r170 已经将原来的 MMD 模块标记为 deprecated，因此项目不要把旧版 Three.js `MMDLoader` 直接写死在业务代码里。现在推荐把 MMD 放在独立 `MmdRuntime` 抽象层。目前 `@moeru/three-mmd` 仍在维护，并提供 PMX/MMD runtime、动画、toon material 以及独立 Ammo 物理插件。
 
-同样的抽象原则也适用于 AI / Memory / Vision：业务代码只依赖 `AgentProvider` / `MemoryProvider` / `VisionProvider` 三个 trait，不直接依赖某一个模型服务商 SDK 或某一个具体记忆框架。详见「AI Layer」「Memory Interface」「Vision Interface」章节。
+同样的抽象原则也适用于 BrainEngine 与 AudioEngine：业务代码只依赖 `AgentProvider` / `MemoryProvider` / `VisionProvider` / `TtsProvider` 等稳定 port，不直接依赖某个模型、记忆或语音服务商。跨 Engine 的工作流由 CompanionOrchestrator 组合；动作建议统一经过 BehaviorPlanner。详见“AI Layer”“Memory Interface”“Vision Interface”和“AudioEngine Architecture”章节。
 
 ---
 
@@ -199,152 +199,188 @@ skipTaskbar = true
 
 # 4. 总体系统架构
 
-最终建议：
+目标架构采用：
 
 ```text
-┌───────────────────────────────────────────────┐
-│             Desktop Companion                │
-│                                               │
-│                Tauri Shell                    │
-├───────────────────────────────────────────────┤
-│                                               │
-│              Rust Native Core                 │
-│                                               │
-│ ┌───────────────────────────────────────────┐ │
-│ │ Windows Runtime                           │ │
-│ │                                           │ │
-│ │ MonitorManager                            │ │
-│ │ WindowManager                             │ │
-│ │ CursorManager                             │ │
-│ │ HitTestManager                            │ │
-│ │ DesktopWorld                              │ │
-│ │ UIAutomationService                       │ │
-│ └───────────────────────────────────────────┘ │
-│                                               │
-│ ┌───────────────────────────────────────────┐ │
-│ │ Character Host                            │ │
-│ │                                           │ │
-│ │ DesktopPosition                           │ │
-│ │ Velocity                                  │ │
-│ │ Gravity                                   │ │
-│ │ Drag                                      │ │
-│ │ Collision                                 │ │
-│ │ SupportSurface                            │ │
-│ └───────────────────────────────────────────┘ │
-│                                               │
-├───────────────────────────────────────────────┤
-│              Tauri IPC / Events               │
-├───────────────────────────────────────────────┤
-│                                               │
-│           TypeScript Character Runtime        │
-│                                               │
-│ ┌───────────────────────────────────────────┐ │
-│ │ Three.js                                  │ │
-│ │                                           │ │
-│ │ Scene                                     │ │
-│ │ Camera                                    │ │
-│ │ Renderer                                  │ │
-│ │ PMX                                       │ │
-│ │ Skeleton                                  │ │
-│ │ Morph                                     │ │
-│ │ MMD Physics                               │ │
-│ └───────────────────────────────────────────┘ │
-│                                               │
-│ ┌───────────────────────────────────────────┐ │
-│ │ Animation Runtime                         │ │
-│ │                                           │ │
-│ │ Idle                                      │ │
-│ │ Walk                                      │ │
-│ │ Sit                                       │ │
-│ │ Fall                                      │ │
-│ │ Drag                                      │ │
-│ │ LookAt                                    │ │
-│ │ Blink                                     │ │
-│ │ LipSync                                   │ │
-│ └───────────────────────────────────────────┘ │
-│                                               │
-├───────────────────────────────────────────────┤
-│               Intelligence                    │
-│                                               │
-│ LLM → Emotion → Behavior → Character          │
-│                                               │
-└───────────────────────────────────────────────┘
+一个应用编排层（Application Orchestration）
++
+四个职责域（Desktop / Character / Brain / Audio）
 ```
 
-核心原则：
+这里的 Engine 是**职责和依赖边界**，不等于四个进程、四个线程或四种语言。第一版仍然可以运行在同一个 Tauri 应用中；边界通过 TypeScript interface、Rust trait、Tauri command 和 event 保持稳定。
 
 ```text
-Rust = Desktop World
-
-Three.js = Character World
+                         Desktop Companion
+                    CompanionOrchestrator
+                  （生命周期、路由、优先级协调）
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+   DesktopEngine       CharacterEngine       BrainEngine
+       Rust               Three.js              Rust
+   Windows/Physics      PMX/Animation       LLM/Memory/Vision
+   Window/UIA           Morph/LookAt        BehaviorProposal
+          │                   ▲                   │
+          │                   │                   │
+          └── DesktopEvent ───┼── BehaviorIntent ┘
+                              │
+                        BehaviorPlanner
+                    （校验、仲裁、调度、降级）
+                              │
+               ┌──────────────┴──────────────┐
+               ▼                             ▼
+        CharacterEngine                 AudioEngine
+        Motion / Emotion          TTS / SFX / Playback
+               ▲                             │
+               └──── LipSyncFrame / AudioEvent
 ```
 
-不要反过来。
+`CompanionOrchestrator` 是应用层编排器，不是第五个业务 Engine。它负责组合各 Engine、订阅事件、转发契约和释放资源，但不实现 Windows 物理、PMX 动画、LLM 请求或音频解码。
+
+`ConversationOrchestrator` 则是 BrainEngine 内部的会话编排器，负责 Memory、DesktopContext、可选 Vision 与 AgentProvider 的调用。两者不要混为一个巨型类：
+
+```text
+CompanionOrchestrator     → 跨 Engine 的应用工作流
+ConversationOrchestrator  → BrainEngine 内的一次对话工作流
+```
+
+核心数据契约：
+
+```text
+DesktopEngine   → DesktopEvent / SemanticDesktopContext
+BrainEngine     → AgentResponse / BehaviorProposal
+BehaviorPlanner → BehaviorIntent / SpeechIntent
+AudioEngine     → AudioEvent / LipSyncFrame
+CharacterEngine → CharacterEvent / VisualState
+```
+
+禁止通过共享可变对象跨 Engine 操作内部状态。跨边界只能传递可验证的数据契约或调用窄接口。
+
+核心原则仍然是：
+
+```text
+Rust = Windows 世界 + 安全 Provider 主机
+Three.js = 角色视觉世界
+BrainEngine = 语义决策
+AudioEngine = 声音生命周期与嘴型数据来源
+```
 
 ---
 
-# 5. Rust 与 Three.js 的职责边界
+# 5. 引擎职责与语言边界
 
-## Rust 负责
+## DesktopEngine（Rust）负责
 
 ```text
-Windows坐标
+Windows 坐标
 窗口位置
-显示器
-DPI
-鼠标
-拖拽
-重力
-桌面碰撞
-窗口检测
-前台应用
-任务栏
+显示器与 DPI
+全局鼠标与拖拽
+桌面重力和碰撞
+窗口检测与前台应用
+任务栏与支撑面
 UI Automation
-角色窗口移动
-角色Desktop位置
-配置
-持久化
+角色原生窗口移动
+语义化 DesktopContext
 ```
 
-## TypeScript / Three.js 负责
+DesktopEngine 输出桌面事实和系统事件，不决定角色应该表现出什么情绪，也不播放 PMX 动作。
+
+## CharacterEngine（TypeScript / Three.js）负责
 
 ```text
-PMX
-Mesh
-Skeleton
-Morph
-MMD Physics
-动画
-LookAt
-Blink
-LipSync
-材质
-Lighting
+PMX / Mesh / Skeleton
+Morph / MMD Physics
+动作播放与混合
+LookAt / Blink
+材质与 Lighting
 角色点击形状计算
+应用 LipSyncFrame
+应用已经批准的 BehaviorIntent
 ```
 
-## LLM 不允许直接控制
+CharacterEngine 负责“怎么表现”，不负责调用 LLM、读取密钥或决定 Windows 窗口物理。
+
+## BrainEngine（Rust）负责
 
 ```text
-Bone.rotation
-Mesh.position
-Window HWND
+AgentProvider
+ConversationOrchestrator
+MemoryProvider
+VisionProvider（可选）
+语义桌面上下文理解
+生成 speech / emotion / action 建议
 ```
 
-LLM 只能输出：
+BrainEngine 可以根据场景选择一个**语义动作 ID**，但输出的是 `BehaviorProposal`，不是已经获得执行权的命令。
+
+## AudioEngine（Rust Provider + 前端或原生播放适配器）负责
+
+```text
+TTS / STT Provider
+SFX
+播放、取消和打断
+音频资源生命周期
+RMS / Viseme 时间轴
+AudioEvent / LipSyncFrame
+```
+
+AudioEngine 不修改 PMX Morph。它只产生嘴型帧，CharacterEngine 再将帧应用到模型。
+
+## BehaviorPlanner 是执行安全边界
+
+BehaviorPlanner 接收系统事件、用户交互和 BrainEngine 的建议，输出经过批准的 `BehaviorIntent`。它负责：
+
+```text
+动作 ID 是否注册
+动作是否允许 AI 使用
+当前角色状态是否允许播放
+优先级与抢占规则
+冷却时间和并发互斥
+强度、时长和参数范围
+失败时延迟、替换或回到 Idle
+```
+
+因此下面两句话必须同时成立：
+
+```text
+AI 可以在合适场景选择 Greeting / Thinking / Talking 等语义动作
+AI 不可以直接设置 Bone.rotation、Morph 权重、播放设备或 HWND
+```
+
+允许的输出示例：
 
 ```json
 {
-  "action": "walk_to",
-  "emotion": "happy",
-  "speech": "我去那边看看。"
+  "speech": "早上好。",
+  "emotion": { "type": "happy", "intensity": 0.7 },
+  "action": { "id": "greeting", "intensity": 0.6 }
 }
 ```
 
-然后由 Behavior Layer 转换。
+禁止的输出示例：
+
+```json
+{
+  "rightArmRotationZ": 1.24,
+  "mouthMorph": 0.9,
+  "windowY": 500,
+  "audioDevice": "default"
+}
+```
+
+依赖方向必须保持单向：
+
+```text
+BrainEngine ──proposal──► BehaviorPlanner ──intent──► CharacterEngine
+                                          └─speech──► AudioEngine
+AudioEngine ──lip-sync frame / event────────────────► CharacterEngine
+DesktopEngine ──system event────────────────────────► BehaviorPlanner
+```
+
+BrainEngine、AudioEngine 和 DesktopEngine 都不能持有 `CharacterRuntime` 的具体实现；由应用编排层注入接口并转发事件，从结构上避免循环依赖。
 
 ---
-
 # 6. 开发环境
 
 Windows 端 Tauri 当前要求 Microsoft C++ Build Tools 和 WebView2；Windows 10 较新版本和 Windows 11 通常已经带有 WebView2。Rust 应使用 MSVC toolchain。
@@ -460,170 +496,180 @@ src/character/mmd/
 
 # 9. 推荐项目目录
 
-最终目录推荐：
+目录按职责域组织；`app/` 只负责组合，Engine 之间通过 `behavior/`、`audio/` 和 `ipc/` 中的稳定契约通信。
 
 ```text
 desktop-companion/
 │
 ├── src/
-│
 │   ├── app/
 │   │   ├── bootstrap.ts
+│   │   ├── CompanionOrchestrator.ts   // Composition Root 与跨 Engine 工作流
 │   │   └── lifecycle.ts
-│
-│   ├── renderer/
-│   │   ├── CharacterRenderer.ts
-│   │   ├── CameraController.ts
-│   │   └── RenderLoop.ts
-│
-│   ├── character/
-│   │   │
-│   │   ├── CharacterRuntime.ts
-│   │   ├── CharacterController.ts
 │   │
+│   ├── desktop/                       // DesktopEngine 的前端窄桥接
+│   │   └── DesktopBridge.ts
+│   │
+│   ├── character/                     // CharacterEngine
+│   │   ├── CharacterRuntime.ts
+│   │   ├── CharacterCatalog.ts
 │   │   ├── mmd/
 │   │   │   ├── MmdRuntime.ts
 │   │   │   ├── MoeruMmdRuntime.ts
 │   │   │   ├── BoneMap.ts
 │   │   │   ├── MorphMap.ts
 │   │   │   └── ModelManifest.ts
-│   │
 │   │   ├── animation/
-│   │   │   ├── AnimationController.ts
-│   │   │   ├── IdleController.ts
+│   │   │   ├── MotionController.ts
+│   │   │   ├── MotionCatalog.ts
 │   │   │   ├── BlinkController.ts
-│   │   │   ├── LookAtController.ts
-│   │   │   └── LipSyncController.ts
-│   │
+│   │   │   └── LookAtController.ts
 │   │   └── interaction/
 │   │       ├── HitRegionController.ts
 │   │       └── PointerController.ts
-│
-│   ├── desktop/
-│   │   ├── DesktopBridge.ts
-│
+│   │
+│   ├── behavior/                      // Proposal → 可执行 Intent
+│   │   ├── BehaviorTypes.ts
+│   │   ├── BehaviorPlanner.ts
+│   │   ├── BehaviorScheduler.ts
+│   │   └── BehaviorPolicy.ts          // 优先级、抢占、冷却和 AI allow-list
+│   │
+│   ├── audio/                         // AudioEngine 的播放侧
+│   │   ├── AudioTypes.ts
+│   │   ├── AudioController.ts         // 播放、打断与统一生命周期
+│   │   ├── speech/
+│   │   │   ├── SpeechController.ts
+│   │   │   └── WebSpeechEngine.ts     // 无密钥调试适配器
+│   │   ├── sfx/
+│   │   │   └── SfxController.ts
+│   │   └── lipsync/
+│   │       └── LipSyncAdapter.ts      // AudioFrame → LipSyncFrame
+│   │
+│   ├── brain/                         // BrainEngine 的 WebView IPC 客户端
+│   │   └── BrainBridge.ts             // 不持有密钥，不直接发网络请求
+│   │
+│   ├── config/
+│   │   ├── CharacterSettings.ts
+│   │   ├── SettingsPanel.ts
+│   │   └── SettingsWindow.ts
+│   │
+│   ├── renderer/
+│   │   ├── CharacterRenderer.ts
+│   │   └── RenderLoop.ts
+│   │
 │   ├── ipc/
 │   │   ├── commands.ts
 │   │   ├── events.ts
-│   │   └── schemas.ts
+│   │   └── schemas.ts                 // 所有跨 Rust / TS DTO 的运行时校验
+│   │
+│   └── ui/
+│       ├── SpeechBubble.ts
+│       └── ContextMenu.ts
 │
-│   ├── ui/
-│   │   ├── SpeechBubble.ts
-│   │   ├── ContextMenu.ts
-│   │   └── SettingsPanel.ts        // Provider 配置界面（不持有密钥，只调用 command）
-│
-│   ├── speech/
-│   │   ├── SpeechTypes.ts          // Engine / STT / 动作帧契约
-│   │   ├── SpeechController.ts     // 播放生命周期与打断所有权
-│   │   └── WebSpeechEngine.ts      // 无密钥本地调试适配器
-│
-│   ├── intelligence/
-│   │   │
-│   │   │   // 前端只做 IPC 客户端 + UI 呈现，不直接持有任何 API Key，
-│   │   │   // 也不直接发起对模型服务商的网络请求
-│   │   │
-│   │   ├── ConversationBridge.ts   // send_chat_message / ai:// 事件订阅
-│   │   ├── BehaviorPlanner.ts      // AgentResponse → Character 行为意图
-│   │   └── EmotionController.ts
+├── src-tauri/src/
+│   ├── lib.rs
+│   ├── runtime.rs
 │   │
-│   └── main.ts
-│
-├── src-tauri/
-│
-│   ├── src/
+│   ├── orchestration/
+│   │   └── companion.rs               // Native 生命周期与跨服务装配，不含业务细节
 │   │
-│   │   ├── lib.rs
+│   ├── commands/
+│   │   ├── character.rs
+│   │   ├── desktop.rs
+│   │   ├── brain.rs
+│   │   └── audio.rs
 │   │
-│   │   ├── commands/
-│   │   │   ├── mod.rs
-│   │   │   ├── character.rs
-│   │   │   ├── desktop.rs
-│   │   │   ├── models.rs
-│   │   │   └── intelligence.rs     // send_chat_message / provider 相关 command
+│   ├── windows/
+│   │   ├── monitor.rs
+│   │   ├── cursor.rs
+│   │   ├── enumeration.rs
+│   │   └── events.rs
 │   │
-│   │   ├── windows/
-│   │   │   ├── mod.rs
-│   │   │   ├── character_window.rs
-│   │   │   ├── monitor.rs
-│   │   │   ├── cursor.rs
-│   │   │   ├── enumeration.rs
-│   │   │   ├── foreground.rs
-│   │   │   └── events.rs
+│   ├── desktop/                       // DesktopEngine
+│   │   ├── world.rs
+│   │   ├── surface.rs
+│   │   ├── physics.rs
+│   │   └── automation.rs
 │   │
-│   │   ├── desktop/
-│   │   │   ├── mod.rs
-│   │   │   ├── world.rs
-│   │   │   ├── surface.rs
-│   │   │   └── physics.rs
+│   ├── character/                     // 角色原生窗口状态
+│   │   └── state.rs
 │   │
-│   │   ├── character/
-│   │   │   ├── mod.rs
-│   │   │   ├── state.rs
-│   │   │   ├── movement.rs
-│   │   │   └── drag.rs
-│   │
-│   │   ├── automation/
-│   │   │   ├── mod.rs
-│   │   │   ├── uia.rs
-│   │   │   └── element.rs
-│   │
+│   ├── brain/                         // BrainEngine
+│   │   ├── conversation.rs            // ConversationOrchestrator
+│   │   ├── proposal.rs                // BehaviorProposal / EmotionProposal
+│   │   ├── validation.rs              // 结构、范围、权限与记忆写入校验
+│   │   ├── secrets.rs
 │   │   ├── ai/
-│   │   │   ├── mod.rs
-│   │   │   ├── provider.rs         // AgentProvider trait + AgentRequest/Response
-│   │   │   ├── manager.rs          // AgentManager：注册/热切换 provider
-│   │   │   ├── conversation.rs     // ConversationOrchestrator
-│   │   │   ├── safety.rs           // Safety / Validation
-│   │   │   ├── secrets.rs          // keyring / Stronghold 封装
+│   │   │   ├── provider.rs
+│   │   │   ├── manager.rs
 │   │   │   └── providers/
-│   │   │       ├── mod.rs
-│   │   │       ├── openai_compatible.rs
-│   │   │       ├── anthropic.rs
-│   │   │       └── oauth.rs
-│   │
 │   │   ├── memory/
-│   │   │   ├── mod.rs
-│   │   │   ├── provider.rs         // MemoryProvider trait + 数据结构
+│   │   │   ├── provider.rs
 │   │   │   ├── manager.rs
 │   │   │   └── providers/
-│   │   │       ├── mod.rs
-│   │   │       ├── sqlite.rs       // 默认实现
-│   │   │       └── remote.rs       // mem0 / Zep / Letta 等通用适配器
+│   │   └── vision/
+│   │       ├── provider.rs
+│   │       ├── manager.rs
+│   │       └── capture.rs
 │   │
-│   │   ├── vision/
-│   │   │   ├── mod.rs
-│   │   │   ├── provider.rs         // VisionProvider trait + 数据结构（先定义，不启用）
-│   │   │   ├── manager.rs
-│   │   │   ├── capture.rs          // Windows 截屏，受权限开关控制
-│   │   │   └── providers/
-│   │   │       ├── mod.rs
-│   │   │       └── multimodal_agent.rs
+│   ├── audio/                         // AudioEngine 的 Provider / 原生侧
+│   │   ├── provider.rs                // TtsProvider / SttProvider
+│   │   ├── manager.rs
+│   │   ├── playback.rs
+│   │   └── sfx.rs
 │   │
-│   │   ├── speech/
-│   │   │   ├── mod.rs
-│   │   │   └── provider.rs         // TtsProvider / SttProvider + 音频与 viseme 契约
-│   │
-│   │   ├── models/
-│   │   │   ├── mod.rs
-│   │   │   ├── import.rs
-│   │   │   └── manifest.rs
-│   │
-│   │   └── storage/
-│   │       ├── mod.rs
-│   │       └── settings.rs
-│   │
-│   ├── capabilities/
-│   │   └── default.json
-│   │
-│   ├── Cargo.toml
-│   └── tauri.conf.json
+│   ├── storage/
+│   │   └── settings.rs
+│   └── error.rs
 │
-└── package.json
+├── src-tauri/capabilities/
+├── docs/
+├── public/
+├── package.json
+└── pnpm-lock.yaml
 ```
 
-> `ai/`、`memory/`、`vision/` 三个目录是本手册在基础架构之上新增的 **Brain Engine** 子模块，彼此之间只通过各自的 trait 交互，互不感知具体实现，方便后续替换模型服务商、替换记忆框架、或接入真实视觉模型。
+当前代码可以渐进迁移，不要求一次性移动所有文件。例如现有 `src/speech/` 可先作为 `AudioEngine` 的语音子模块，现有 Rust `ai/`、`memory/`、`vision/`、`speech/` 可以先由 facade 组合，再在稳定后调整物理目录。
+
+目录依赖规则：
+
+```text
+app           可以组合所有 facade
+behavior      只依赖共享类型、目录查询接口和 Engine port
+character     不依赖 brain 的 Provider 或响应原始 JSON
+audio         不依赖 CharacterRuntime 具体类，只依赖 LipSyncTarget port
+brain         不依赖 Three.js、PMX、Web Audio 或 Desktop HWND
+ipc           不依赖具体 Engine 实现
+```
+
+不要为了目录整齐把所有逻辑塞进 `CompanionOrchestrator`。编排层应该薄，只描述调用顺序和所有权。
+## 当前代码到目标架构的映射
+
+| 当前实现 | 目标职责 | 迁移策略 |
+|---|---|---|
+| `src/app/bootstrap.ts` | 当前 Composition Root | 保留启动职责，跨 Engine 工作流逐步移入 `CompanionOrchestrator` |
+| `src/desktop/DesktopBridge.ts` + Rust `desktop/`、`runtime.rs` | DesktopEngine | 保持 IPC 窄接口，不让前端重算桌面物理 |
+| `src/character/CharacterRuntime.ts` | CharacterEngine facade | 后续只接收 `BehaviorIntent`、视觉设置和 `LipSyncFrame` |
+| `MotionController.ts` + `MotionCatalog.ts` | 动作执行与动作目录 | 保持模型实现细节，不接收 AgentResponse 原始 JSON |
+| `src/speech/SpeechController.ts` | AudioEngine 语音原型 | 逐步由 `AudioController` 统一 TTS、SFX、打断和播放会话 |
+| Rust `ai/`、`memory/`、`vision/` | BrainEngine Provider 契约 | 增加 Manager、ConversationOrchestrator 与结构化校验 |
+| Rust `speech/provider.rs` | AudioEngine Provider 契约 | 增加 Provider Manager、受控播放和 RMS/Viseme 输出 |
+
+当前仍缺少、且应优先于真实 LLM 接入的组件：
+
+```text
+BehaviorTypes
+BehaviorPlanner
+BehaviorScheduler
+BehaviorPolicy
+CompanionOrchestrator facade
+BrainBridge / ConversationOrchestrator
+AudioController / SFX / 原生或受控播放适配器
+```
+
+迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
 
 ---
-
 # 10. Tauri Character Window
 
 第一版 Character Window 推荐：
@@ -2220,180 +2266,291 @@ Semantic Desktop Context
 
 # 49. Character Behavior
 
-建议定义：
+Behavior 不是动画文件名，而是角色在某个场景下的**语义表现状态**。建议分成三类：
 
 ```text
-Idle
-Walk
-Sit
-Fall
-Land
-Dragged
-Talk
-Sleep
-Interact
+系统物理行为：Dragged / Falling / Landing
+交互行为：Greeting / Talking
+环境与 AI 表现：Idle / Thinking / Happy / Sit / Sleep / 后续导入动作
 ```
 
-状态机：
+系统物理行为由 DesktopEngine 的事实触发，优先级最高；AI 不得禁用、替换或延长它们。AI 可以从 MotionCatalog 中 `aiSelectable = true` 且用户已启用的动作里选择表现行为。
+
+不要再用一个枚举同时表达：
 
 ```text
-                  IDLE
-                   │
-          ┌────────┼─────────┐
-          ▼        ▼         ▼
-        WALK      TALK     SLEEP
-          │
-          ▼
-        FALL
-          │
-          ▼
-        LAND
-          │
-          ▼
-        IDLE
-
-MouseDown
-   │
-   ▼
-DRAGGED
-   │
-MouseUp
-   │
-   ├── Surface
-   │      ↓
-   │     LAND
-   │
-   └── Air
-          ↓
-         FALL
+桌面物理状态
+当前动画片段
+情绪
+说话状态
+AI 建议
 ```
+
+推荐将它们拆成可组合状态：
+
+```ts
+interface CharacterBehaviorState {
+  physical: 'idle' | 'dragged' | 'falling' | 'landing';
+  primaryMotion: string;
+  emotion: EmotionState;
+  speaking: boolean;
+}
+```
+
+动作选择使用两个不同契约：
+
+```ts
+interface BehaviorProposal {
+  actionId?: string;
+  emotion?: EmotionIntent;
+  speech?: string;
+  intensity?: number;
+}
+
+interface BehaviorIntent {
+  actionId: string;
+  source: 'system' | 'interaction' | 'ai' | 'audio';
+  priority: number;
+  intensity: number;
+  issuedAt: number;
+}
+```
+
+`BehaviorProposal` 是 BrainEngine 的建议，可以被拒绝；`BehaviorIntent` 是 BehaviorPlanner 校验后交给 CharacterEngine 的执行意图。代码和日志中不要把两者都简称为 `action`。
 
 ---
 
 # 50. Behavior 与 Animation 分离
 
-例如：
+完整链路应为：
 
 ```text
-Behavior:
-WalkTo(Chrome)
-
-        ↓
-
-Navigation
-
-        ↓
-
-MovementIntent:
-velocity = +80 px/s
-
-        ↓
-
-Rust Window Movement
+DesktopEvent / UserInteraction / AgentResponse / AudioEvent
+                         │
+                         ▼
+                  BehaviorPlanner
+          校验 → 仲裁 → 调度 → 生成 BehaviorIntent
+                         │
+                         ▼
+                  BehaviorScheduler
+              抢占 / 排队 / 冷却 / 恢复
+                         │
+                         ▼
+                  AnimationSelector
+          语义动作 ID → 程序化动作或具体 VMD
+                         │
+                         ▼
+                   MotionController
+             混合、过渡、骨骼与 Morph 执行
 ```
 
-与此同时：
-
-```text
-AnimationIntent:
-walk
-```
-
-TS 播放走路动作。
-
----
-
-# 51. VMD 后续加入
-
-建议目录：
-
-```text
-assets/
-└── motions/
-    ├── idle/
-    ├── walk/
-    ├── sit/
-    ├── sleep/
-    ├── wave/
-    ├── happy/
-    └── special/
-```
-
-定义：
+例如 AI 在问候场景选择：
 
 ```json
 {
-  "id": "walk_01",
-
-  "tags": [
-    "walk",
-    "forward",
-    "female"
-  ],
-
-  "loop": true
+  "action": { "id": "greeting", "intensity": 0.7 }
 }
 ```
 
-以后 Agent 不选：
+BehaviorPlanner 的处理：
+
+```text
+1. MotionCatalog 中是否存在 greeting
+2. greeting 是否允许 AI 使用且用户已启用
+3. 当前是否处于 Dragged / Falling / Landing
+4. 是否仍在冷却时间
+5. 强度是否在允许范围
+6. 批准、延迟、替换或拒绝
+```
+
+若角色正在 Falling：
+
+```text
+AI Proposal: Greeting
+        ↓
+BehaviorPlanner: 延迟或拒绝
+        ↓
+CharacterEngine: 继续 Falling
+        ↓
+Landing 完成后重新评估 Greeting
+```
+
+推荐优先级：
+
+| 层级 | 来源 | 示例 | 默认策略 |
+|---|---|---|---|
+| 100 | 系统安全/物理 | Dragged、Falling、Landing | 立即抢占，不允许 AI 覆盖 |
+| 80 | 用户直接交互 | 点击问候、用户明确命令 | 可抢占普通 AI 表现 |
+| 60 | 语音同步 | Talking、Listening | 与主动作按策略叠加 |
+| 40 | AI 场景动作 | Greeting、Thinking、Happy | 仅从 allow-list 选择 |
+| 10 | 环境动作 | Idle、偶尔歪头 | 任意高优先级行为可打断 |
+
+涉及桌面移动时还要拆成两个意图：
+
+```text
+BehaviorIntent: WalkTo(Chrome)
+        ├─ MovementIntent → DesktopEngine → Native Window Movement
+        └─ MotionIntent   → CharacterEngine → Walk Animation
+```
+
+CharacterEngine 不直接移动 HWND；DesktopEngine 也不直接选择 VMD。
+
+---
+
+# 51. Motion Catalog 与 VMD 导入
+
+Agent 不选择文件名：
 
 ```text
 walk_001.vmd
 ```
 
-而选：
+Agent 只能选择稳定的语义动作 ID：
 
 ```text
-Action = WALK
+walk
+greeting
+thinking
 ```
 
-AnimationSelector 决定具体 VMD。
+MotionCatalog 再把动作 ID 映射到程序化动作或某个 VMD 变体：
+
+```ts
+interface MotionDefinition {
+  id: string;
+  displayName: string;
+  description: string;
+  source: 'procedural' | 'vmd';
+  asset?: string;
+  scenes: string[];
+  aiSelectable: boolean;
+  loop: boolean;
+  interruptible: boolean;
+  cooldownMs: number;
+  allowedPhysicalStates: string[];
+  fallbackId?: string;
+}
+```
+
+只向 BrainEngine提供以下最小信息：
+
+```json
+{
+  "id": "thinking",
+  "description": "短暂思考和观察",
+  "scenes": ["思考", "等待回答"]
+}
+```
+
+不要向 LLM 暴露本地路径、VMD 文件名、骨骼名称或动画混合参数。
+
+建议资源目录：
+
+```text
+assets/
+└── motions/
+    ├── idle/
+    ├── greeting/
+    ├── talking/
+    ├── thinking/
+    ├── sit/
+    └── special/
+```
+
+VMD 导入流程必须包含：
+
+```text
+文件选择与 capability scope
+格式与大小校验
+动作元数据读取
+骨骼映射/重定向检查
+模型兼容性预览
+场景标签与 aiSelectable 配置
+复制到受管资源目录
+注册 MotionCatalog
+```
+
+导入失败时不能留下已注册但不可播放的动作。MotionCatalog 的保存与资源复制必须具有同一事务语义，或提供可恢复的回滚步骤。
 
 ---
 
-# 52. Speech Architecture
+# 52. AudioEngine Architecture
 
-最终：
+AudioEngine 是独立职责域，但不直接控制 CharacterEngine。目标数据流：
 
 ```text
-LLM
- ↓
-Text
- ↓
-TTS
- ↓
-Audio
- ├─────────────→ Speaker
- │
- ↓
-LipSync
- ↓
-Morph
+User / System / BrainEngine
+             │
+         SpeechIntent
+             ▼
+        AudioController
+     ┌───────┼────────┐
+     ▼       ▼        ▼
+    TTS     SFX     Playback
+     │                │
+     └────── Audio Timeline
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+      Speaker             LipSyncAnalyzer
+                              │
+                         LipSyncFrame
+                              │
+                              ▼
+                      CharacterEngine Morph
 ```
+
+职责拆分：
+
+| 组件 | 职责 |
+|---|---|
+| `TtsProvider` | 文本合成音频和可选 VisemeCue，不管理角色 |
+| `SttProvider` | 用户显式授权后的语音识别，不生成动作 |
+| `AudioController` | 播放、取消、打断、音量组与活动会话所有权 |
+| `SfxController` | 短音效、分类音量和并发限制 |
+| `LipSyncAnalyzer` | 从 RMS 或音素时间戳生成标准嘴型帧 |
+| `CharacterEngine` | 消费 LipSyncFrame 并应用 PMX Morph |
+
+稳定事件：
+
+```text
+audio://preparing
+audio://started
+audio://frame
+audio://completed
+audio://cancelled
+audio://failed
+```
+
+`audio://frame` 只携带归一化音量、可选 viseme 和时间戳，不携带 PMX Morph 名称。角色模型自己的 MorphMap 负责最终映射。
+
+BrainEngine 只能产生 `speech` 文本或语音意图；它不能指定扬声器设备、直接播放字节、改变系统音量或伪造播放完成事件。
 
 ---
 
 # 53. Lip Sync
 
-第一版不要上复杂音素模型。
-
-直接：
+第一阶段：
 
 ```text
-Audio RMS
- ↓
-Mouth Open
+Audio RMS (0..1)
+       ↓
+LipSyncFrame.level
+       ↓
+CharacterEngine
+       ↓
+Mouth Open Morph
 ```
 
-即可。
-
-第二版：
+第二阶段：
 
 ```text
-TTS phoneme timestamps
- ↓
-A I U E O
- ↓
+TTS VisemeCue / phoneme timestamps
+       ↓
+A / I / U / E / O
+       ↓
+模型 MorphMap
+       ↓
 PMX Morph
 ```
 
@@ -2407,6 +2564,15 @@ E → え
 O → お
 ```
 
+规则：
+
+```text
+语音帧优先于程序化 Talking 嘴型
+播放取消、失败或结束时必须发送静音帧
+嘴型可以与非冲突的上半身动作叠加
+SFX 默认不驱动嘴型
+```
+
 ---
 
 # 54. Emotion
@@ -2415,36 +2581,37 @@ O → お
 
 ```ts
 export type Emotion =
-    | 'neutral'
-    | 'happy'
-    | 'sad'
-    | 'angry'
-    | 'surprised'
-    | 'tired';
+  | 'neutral'
+  | 'happy'
+  | 'sad'
+  | 'angry'
+  | 'surprised'
+  | 'tired';
 ```
 
-Emotion 不直接：
+Emotion 也是语义建议，不直接等于 Morph 权重：
 
 ```text
-Morph = 1
-```
-
-而经过：
-
-```text
+EmotionProposal
+      ↓
+BehaviorPlanner / EmotionPolicy
+      ↓
+EmotionIntent
+      ↓
 EmotionController
+      ↓
+模型专属 MorphMap + Motion Overlay
 ```
 
-例如：
+例如 BrainEngine 可以建议：
 
 ```json
 {
-  "emotion": "happy",
-  "intensity": 0.72
+  "emotion": { "type": "happy", "intensity": 0.72 }
 }
 ```
 
-映射：
+系统校验后再映射为：
 
 ```text
 smile morph = 0.7
@@ -2453,8 +2620,9 @@ head pose = positive
 idle animation = happy idle
 ```
 
----
+不同模型可以使用完全不同的 Morph 名称和数值范围，BrainEngine 不需要知道这些差异。
 
+---
 # 55. AI Layer
 
 AI 一定是最后接入运行时，但 **接口必须从项目一开始就抽象好**，否则后续更换模型、更换记忆框架、增加视觉能力时都会牵动 Character Runtime。
@@ -2470,29 +2638,39 @@ Frontend（Three.js / TypeScript）**不允许**持有 API Key，也**不允许*
 最终数据流：
 
 ```text
-Frontend (对话输入 / 文本气泡)
+Frontend（对话输入 / 文本气泡）
       │  invoke("send_chat_message")
       ▼
 Rust: ConversationOrchestrator
-      │
-      ├─ MemoryProvider.search()      ← 记忆检索（见 Memory Interface）
-      ├─ DesktopContext（现有语义上下文）
-      ├─ VisionProvider.describe()    ← 可选，用户显式触发时才调用
-      │
-      ▼
-AgentProvider.chat(AgentRequest)      ← 真正调用 LLM
+      ├─ MemoryProvider.search()       ← 记忆检索
+      ├─ SemanticDesktopContext        ← 只有语义事实，不暴露 HWND
+      ├─ VisionProvider.describe()     ← 可选且必须显式授权
+      └─ AvailableAction[]             ← 当前允许 AI 建议的动作摘要
       │
       ▼
-AgentResponse
+AgentProvider.chat(AgentRequest)
       │
       ▼
-Safety / Validation
+AgentResponse（仍是不可信外部输出）
       │
       ▼
-BehaviorPlanner → Character Runtime
+Schema / Safety / Range Validation
       │
-      └─ MemoryProvider.add()         ← 写回记忆（异步，不阻塞角色响应）
+      ▼
+BrainResult
+      ├─ speech ──────────────────────► AudioEngine
+      ├─ behaviorProposal ────────────► BehaviorPlanner
+      ├─ emotionProposal ─────────────► BehaviorPlanner
+      └─ memoryWriteProposal ─────────► MemoryPolicy → MemoryProvider.add()
+                                             │
+                                             ▼
+                                      BehaviorIntent
+                                             │
+                                             ▼
+                                      CharacterEngine
 ```
+
+`AvailableAction[]` 只包含动作 ID、描述和场景标签，来源于 MotionCatalog 与用户配置。它不包含本地文件路径、VMD 文件名、骨骼名称或 Morph 参数。这样 AI 能根据场景选择动作，但无法越过动作目录和执行策略。
 
 ## AgentProvider：模型服务商抽象
 
@@ -2526,20 +2704,33 @@ pub trait AgentProvider: Send + Sync {
 请求 / 响应契约（跨所有 provider 统一）：
 
 ```rust
+pub struct AvailableAction {
+    pub id: String,
+    pub description: String,
+    pub scenes: Vec<String>,
+}
+
 pub struct AgentRequest {
-    pub system_prompt: String,           // 人设 / persona
-    pub history: Vec<ChatMessage>,       // 短期对话历史（来自 MemoryProvider）
-    pub retrieved_memory: Vec<String>,   // 长期记忆检索结果（RAG）
-    pub desktop_context: Option<DesktopContextJson>, // 语义化桌面上下文
-    pub vision_context: Option<String>,  // 可选：VisionProvider 的描述结果
+    pub system_prompt: String,
+    pub history: Vec<ChatMessage>,
+    pub retrieved_memory: Vec<String>,
+    pub desktop_context: Option<DesktopContextJson>,
+    pub vision_context: Option<String>,
+    pub available_actions: Vec<AvailableAction>, // 只给 AI 当前 allow-list
     pub user_input: String,
 }
 
 pub struct AgentResponse {
     pub speech: String,
-    pub emotion: Option<EmotionIntent>,
-    pub action: Option<ActionIntent>,
-    pub memory_write: Vec<MemoryWriteIntent>, // LLM 想记住的内容，仍需校验
+    pub emotion: Option<EmotionProposal>,
+    pub behavior: Option<BehaviorProposal>,
+    pub memory_write: Vec<MemoryWriteProposal>,
+}
+
+pub struct BehaviorProposal {
+    pub action_id: String,
+    pub intensity: Option<f32>,
+    pub reason: Option<String>, // 仅供诊断，不参与底层执行
 }
 ```
 
@@ -2585,7 +2776,7 @@ test_ai_provider(providerId)   // 发一条测试消息，验证 key / base_url 
 ```text
 ai://thinking          // 开始请求，前端可显示"思考中"动画
 ai://delta   { text }  // 增量文本，驱动气泡逐字显示
-ai://response { speech, emotion, action }  // 完整结构化结果，驱动行为与表情
+ai://response { speech, emotionProposal, behaviorProposal } // 经 Rust 校验的语义建议
 ai://error   { message, providerId }
 ```
 
@@ -2594,23 +2785,22 @@ ai://error   { message, providerId }
 ```json
 {
   "speech": "你回来啦。",
-
   "emotion": {
     "type": "happy",
     "intensity": 0.8
   },
-
-  "action": {
-    "type": "wave"
+  "behavior": {
+    "actionId": "greeting",
+    "intensity": 0.7,
+    "reason": "用户刚刚回到桌面"
   },
-
-  "memory": {
-    "remember": ["用户今天说他明天要考试"]
-  }
+  "memoryWrite": ["用户今天说他明天要考试"]
 }
 ```
 
-`memory.remember` 只是**意图**，最终是否写入、如何写入，由 Safety / Validation 与 `MemoryProvider` 决定，LLM 不能直接写库。
+上面的 `behavior` 只是 `BehaviorProposal`。BehaviorPlanner 必须再次检查 MotionCatalog、用户启用项、当前物理状态、优先级与冷却时间，批准后才生成 `BehaviorIntent`。
+
+`memoryWrite` 同样只是建议，最终是否写入及如何写入由 MemoryPolicy 与 `MemoryProvider` 决定。LLM 不能直接写库。
 
 ---
 
@@ -2840,7 +3030,7 @@ capture_and_describe(region?)   // 显式触发，返回 VisionResult
 
 # 58. Provider 配置与密钥安全
 
-AI / Memory / Vision 三类 Provider 共用同一套配置与密钥管理方式，保持一致，避免每个模块各写一套设置逻辑。
+AI / Memory / Vision 与云端 TTS Provider 共用同一套配置和密钥管理原则，避免每个模块各写一套安全逻辑。音色、音量等非敏感播放参数可以进入普通设置；API Key、OAuth Token 和云端语音凭据必须进入 OS 级安全存储。
 
 ## 两种接入方式
 
@@ -2896,39 +3086,65 @@ Memory → 本地 SqliteMemoryProvider
 Vision → GPT-4o（仅在用户主动触发时调用一次）
 ```
 
-这与「Desktop Engine / Character Engine / Brain Engine」三引擎解耦的思路一致：AI、记忆、视觉是 Brain Engine 内部三个独立可插拔的子模块，互不锁定。
+这与“统一编排层 + 四个职责域”的架构一致：AI、记忆、视觉是 BrainEngine 内部三个独立可插拔子模块；TTS 是 AudioEngine 的可插拔 Provider。它们共享安全规范，但不共享业务状态。
 
 ---
 
-# 59. 不允许 LLM 输出
+# 59. LLM 输出边界
+
+LLM 可以输出：
 
 ```text
-ExecutePowerShell
-DeleteFile
-ClickAnything
-MoveMouse
+speech 文本
+emotion 语义与有限强度
+MotionCatalog 中允许 AI 使用的 actionId
+记忆写入建议
+工具调用建议（只有后续显式启用时）
 ```
 
-Desktop Awareness 和 Desktop Control 必须分开。
+LLM 不允许输出或执行：
 
-第一阶段：
+```text
+Bone.rotation / Bone.position
+Morph 索引或任意权重
+VMD 本地路径或文件名
+Window HWND / 任意桌面坐标写入
+扬声器设备或系统音量控制
+ExecutePowerShell / DeleteFile
+ClickAnything / MoveMouse
+绕过 MotionCatalog 的动作 ID
+伪造 audio://completed 等生命周期事件
+```
+
+这不是禁止 AI 选择动作，而是把选择权限制在稳定的语义动作目录内：
+
+```text
+允许：actionId = "greeting"
+禁止：rightArm.rotation.z = 1.24
+```
+
+Desktop Awareness 和 Desktop Control 必须分开。第一阶段只有：
 
 ```text
 Read-only Awareness
++
+Semantic Behavior Proposal
 ```
 
-后续如果做 Agent 操作电脑：
+后续如果增加 Agent 操作电脑，必须使用另一套显式 Tool Proposal 契约，并经过：
 
 ```text
-显式授权
-+
-Action Validation
-+
+用户显式授权
+Capability allow-list
+参数与目标校验
 危险操作确认
+可取消的执行会话
+审计日志（不记录敏感正文）
 ```
 
----
+Tool Proposal 不得复用 BehaviorProposal；角色表现动作和操作电脑是两个完全不同的权限域。
 
+---
 # 60. Capability Security
 
 Tauri 2 已经采用 capability / permission / scope 模型限制 WebView 可以访问的系统功能。官方建议对不同窗口按 capabilities 约束权限。
@@ -2961,34 +3177,39 @@ AI / Memory / Vision 的网络请求遵循同一原则：**只允许在 Rust 侧
 
 # 61. Settings Window
 
-角色本身不出现菜单栏。
+角色窗口不承载复杂菜单，配置页面必须使用独立 Tauri Window，避免遮挡模型或改变角色命中区域。
 
-建议：
-
-```text
-Character
-
-Right Click
-     ↓
-
-Small Context Menu
-
-聊天
-设置
-角色
-退出
-```
-
-设置页面：
+当前交互：
 
 ```text
-单独 Tauri Window
+Double Click Character
+        ↓
+Independent Settings Window（4:3）
+        ├─ 助手模型
+        ├─ 声音配置
+        └─ 动作配置
 ```
 
-只有需要时出现。
+职责边界：
+
+| 页面 | 保存内容 | 不允许做的事 |
+|---|---|---|
+| 助手模型 | 模型 ID、显示比例、色彩和非敏感连接参数 | 直接加载任意磁盘路径 |
+| 声音配置 | 音色 ID、语言、音量、语速、音调 | 在 WebView 保存云端密钥 |
+| 动作配置 | AI 动作开关、允许的语义动作 ID | 让 AI 直接填骨骼或 VMD 路径 |
+
+模型和动作选择都依赖目录注册：
+
+```text
+CharacterCatalog → characterModelId
+MotionCatalog    → enabledAiMotionIds
+```
+
+配置页只编辑设置和发出预览请求；模型加载、声音播放和动作执行仍由各自 Engine 完成。切换需要重载的资源时，界面必须明确提示“保存后下次启动生效”，不能伪装成已经热切换。
+
+API Key、OAuth Token 和云端语音凭据必须通过 Rust command 写入安全存储，不能进入普通 CharacterSettings。
 
 ---
-
 # 62. Speech Bubble
 
 Speech Bubble 第一版可以放：
@@ -3286,7 +3507,7 @@ Computer Vision
 真正活在Windows桌面上
 ```
 
-> 注意区分"暂时不实现"与"不预留接口"。`AgentProvider` / `MemoryProvider` / `VisionProvider` 三个 trait 建议在 Phase 0（工程骨架）阶段就定义好签名（不需要给出真实实现，可以先用一个什么都不做的 Stub 实现占位），这样后面接入 LLM、记忆、视觉时只是新增一个 Provider 实现并注册进对应的 Manager，不需要回头重构 Character Runtime、IPC 层或 Capability 配置。
+> 注意区分“暂时不实现”与“不预留接口”。Phase 0 应先定义 `AgentProvider` / `MemoryProvider` / `VisionProvider` / `TtsProvider`、`BehaviorProposal` / `BehaviorIntent`、`LipSyncFrame` 和 Engine port，但只使用 Stub 或本地调试适配器。这样后续接入 LLM、记忆、真实语音和视觉时只需新增 Provider 与编排流程，不需要让 CharacterRuntime 反向依赖具体服务商。
 
 ---
 
@@ -3295,25 +3516,36 @@ Computer Vision
 目标：
 
 ```text
-Tauri启动
+Tauri 启动
 +
-透明窗口
+透明角色窗口
 +
 Three Canvas
++
+Engine facade 与稳定契约
+```
+
+只建立接口，不接真实 AI 或云端语音：
+
+```text
+DesktopBridge
+CharacterRuntime facade
+BehaviorProposal / BehaviorIntent
+AudioEvent / LipSyncFrame
+AgentProvider / MemoryProvider / VisionProvider / TtsProvider Stub
 ```
 
 验收：
 
 ```text
-启动EXE
-看不到背景
-看不到边框
-看不到标题栏
-任务栏无图标
+应用可启动且透明窗口正确
+CharacterEngine 不依赖具体 Agent/TTS Provider
+Brain Stub 无法直接获取 CharacterRuntime
+跨 Rust / TS 的 DTO 有 schema 校验
+应用退出时所有 controller / listener 可释放
 ```
 
 ---
-
 # 72. Phase 1：PMX
 
 完成：
@@ -3457,29 +3689,44 @@ follow moving platform
 
 ---
 
-# 78. Phase 7：完整行为状态机
+# 78. Phase 7：行为与动作调度
 
-加入：
+完成：
+
+```text
+MotionCatalog
+BehaviorProposal / BehaviorIntent
+BehaviorPlanner
+BehaviorScheduler
+MotionController
+系统物理动作优先级
+AI allow-list 配置
+```
+
+先接程序化动作：
 
 ```text
 Idle
-Walk
-Fall
-Land
-Sit
-Sleep
+Greeting
 Dragged
+Falling
+Landing
+Talking
 ```
+
+再接 VMD 时保持相同语义动作 ID，不修改 BrainEngine 契约。
 
 验收：
 
 ```text
 动作切换无明显跳帧
-状态不会互相冲突
+Dragged / Falling / Landing 不会被 AI 或 Talking 覆盖
+不存在的 actionId 被拒绝并安全回到 Idle
+关闭 AI 动作选择后所有 AI Proposal 都不会执行
+高优先级行为完成后可以恢复或重新评估排队动作
 ```
 
 ---
-
 # 79. Phase 8：UI Automation
 
 完成：
@@ -3503,57 +3750,63 @@ Name
 
 ---
 
-# 80. Phase 9：Speech
+# 80. Phase 9：AudioEngine
 
 完成：
 
 ```text
-TTS
-Audio
-LipSync
+AudioController
+TTS Provider 或本地调试 Engine
+SFX Controller 基础接口
+播放 / 取消 / 打断
+AudioEvent
+LipSyncFrame
 Speech Bubble
 ```
 
 验收：
 
-角色：
-
 ```text
-说话
-+
-嘴型
-+
-气泡
+语音、嘴型和气泡生命周期一致
+新的语音请求会正确打断旧请求
+结束、取消和失败时嘴型都回到零
+关闭语音后不会播放但角色其他动作保持正常
+SFX 不会错误驱动说话嘴型
+AudioEngine 不直接修改 PMX Morph
 ```
 
 ---
-
-# 81. Phase 10：LLM
+# 81. Phase 10：BrainEngine
 
 完成：
 
 ```text
-AgentProvider 至少一个可用实现（推荐先做 OpenAICompatibleProvider）
+AgentProvider 至少一个可用实现（推荐 OpenAICompatibleProvider）
+AgentManager
 MemoryProvider 默认实现（SqliteMemoryProvider）
 ConversationOrchestrator
-Safety / Validation
-Behavior Intent
+AvailableAction 注入
+Schema / Safety / Range Validation
+BehaviorProposal → BehaviorPlanner
+SpeechIntent → AudioEngine
 ```
 
 验收：
 
 ```text
 角色可以进行多轮对话
-对话具备短期上下文（重启会话后不丢失最近几轮）
-可以在设置里切换/更换 Provider 而不重启角色
-LLM 输出经 Safety 校验后才会驱动 emotion / action
-用户可以清空/删除记忆
+对话具备短期上下文
+可以在设置里热切换 Provider
+LLM 只能从当前 MotionCatalog allow-list 建议 actionId
+未知、禁用或状态冲突的动作被拒绝、延迟或替换
+角色 Falling 时 AI Greeting 不会覆盖系统动作
+LLM speech 进入 AudioEngine，而不是直接调用播放设备
+用户可以清空或删除记忆
 ```
 
-`VisionProvider` 接口保持已定义、默认关闭的状态，留给后续版本接入真实视觉模型，不在本 Phase 范围内。
+`VisionProvider` 保持已定义、默认关闭，留给后续显式授权的视觉功能。第一版 BrainEngine 不具备任意文件、Shell、鼠标或窗口控制能力。
 
 ---
-
 # 82. 第一个月推荐开发顺序
 
 ## Week 1
@@ -3633,95 +3886,130 @@ Window Surface
 
 ---
 
-# 83. 第一版核心数据流
+# 83. 核心运行数据流
+
+## DesktopEngine → CharacterEngine
 
 ```text
-                    Windows
-                       │
-              GetCursorPos / DWM
-                       │
-                       ▼
-                 Rust Native
-                       │
-               DesktopWorld
-                       │
-              CharacterPhysics
-                       │
-                       ▼
-                 Tauri Window
-                       │
-               Tauri Events
-                       │
-                       ▼
-                  TypeScript
-                       │
-                Animation FSM
-                       │
-                       ▼
-                  Three.js
-                       │
-                       ▼
-                     PMX
+Windows
+   │  GetCursorPos / DWM / UIA
+   ▼
+DesktopEngine（Rust）
+   │  DesktopWorld / CharacterState / DesktopEvent
+   ▼
+Tauri IPC / Events
+   │
+   ├─► BehaviorPlanner（Dragged / Falling / Landing）
+   └─► CharacterEngine（LookAt 输入、命中区域同步）
 ```
 
-点击：
+DesktopEngine 拥有原生窗口位置和桌面物理；CharacterEngine 拥有视觉姿态。两边通过状态快照和语义事件同步，不共享位置对象。
+
+## 用户交互 → Behavior
 
 ```text
-Global Cursor
-     │
-     ▼
-Rust HitTest
-     │
- ┌───┴────┐
- │        │
-Character Transparent
- │        │
- ▼        ▼
-input    setIgnoreCursorEvents(true)
+Pointer / Click / Double Click
+          │
+          ▼
+CompanionOrchestrator
+          ├─ 设置请求 ─────────► Settings Window
+          └─ 交互 Proposal ────► BehaviorPlanner
+                                      │
+                                      ▼
+                               BehaviorIntent
+                                      │
+                                      ▼
+                               CharacterEngine
+```
+
+## BrainEngine → 动作与声音
+
+```text
+User Input + Memory + DesktopContext + AvailableAction[]
+                         │
+                         ▼
+                    BrainEngine
+                         │ AgentResponse
+                         ▼
+               Schema / Safety Validation
+                  ┌──────┴────────┐
+                  ▼               ▼
+        BehaviorProposal        SpeechIntent
+                  │               │
+                  ▼               ▼
+          BehaviorPlanner     AudioEngine
+                  │               │
+          BehaviorIntent      AudioEvent
+                  │               ├─► Speech Bubble
+                  ▼               └─► LipSyncFrame
+          CharacterEngine                 │
+                  ▲                       │
+                  └───────────────────────┘
+```
+
+## 优先级与抢占
+
+```text
+System Physical > User Interaction > Audio Sync > AI Behavior > Ambient Idle
+```
+
+优先级只由 BehaviorPolicy 定义，不能由 LLM 在响应中自行指定。LLM 给出的 intensity 只能影响已经允许的表现幅度，不能提升权限或优先级。
+
+---
+# 84. 最终运行时所有权
+
+```text
+Desktop Companion
+│
+├── CompanionOrchestrator
+│   ├── 创建与释放 Engine facade
+│   ├── 路由跨 Engine 事件
+│   └── 不保存 Engine 内部业务状态
+│
+├── DesktopEngine
+│   ├── DesktopWorld
+│   ├── Native Character State
+│   ├── Window / Monitor / UIA
+│   └── Gravity / Collision / Drag
+│
+├── Behavior Runtime
+│   ├── BehaviorPlanner
+│   ├── BehaviorScheduler
+│   ├── BehaviorPolicy
+│   └── MotionCatalog 只读查询
+│
+├── CharacterEngine
+│   ├── PMX / Bone / Morph / IK
+│   ├── MotionController
+│   ├── Blink / LookAt
+│   ├── Material / Renderer
+│   └── LipSyncTarget
+│
+├── AudioEngine
+│   ├── TTS / STT Provider
+│   ├── SFX / Playback
+│   ├── Audio Session
+│   └── LipSyncFrame / AudioEvent
+│
+└── BrainEngine
+    ├── ConversationOrchestrator
+    ├── AgentProvider
+    ├── MemoryProvider
+    ├── VisionProvider
+    └── BehaviorProposal / MemoryWriteProposal
+```
+
+所有权规则：
+
+```text
+一个 Engine 只能修改自己拥有的状态
+跨 Engine 数据默认不可变
+所有长生命周期任务必须可取消
+所有订阅必须由创建者负责释放
+所有外部 Provider 输出进入系统前必须校验
 ```
 
 ---
-
-# 84. 最终角色运行结构
-
-```text
-Character
-│
-├── Native Body
-│
-│   ├── Desktop Position
-│   ├── Velocity
-│   ├── Gravity
-│   ├── Collision
-│   └── Support Surface
-│
-├── Visual Body
-│
-│   ├── PMX
-│   ├── Bone
-│   ├── Morph
-│   ├── IK
-│   └── MMD Physics
-│
-├── Animation
-│
-│   ├── Idle
-│   ├── Walk
-│   ├── Sit
-│   ├── Blink
-│   ├── LookAt
-│   └── LipSync
-│
-└── Brain
-    │
-    ├── Emotion
-    ├── Behavior
-    ├── Conversation
-    └── Memory
-```
-
----
-
 # 85. 最重要的开发原则
 
 整个项目开发过程中，始终遵守这几个原则。
@@ -3769,23 +4057,19 @@ Desktop
 
 ### 原则三
 
-```text
-LLM
-不能直接控制
-底层系统
-```
-
-只能：
+BrainEngine 可以选择语义动作，但不能直接控制底层系统：
 
 ```text
-LLM
- ↓
-Intent
- ↓
-Behavior Planner
- ↓
-Character
+BrainEngine
+    ↓ BehaviorProposal
+Schema / Safety Validation
+    ↓
+BehaviorPlanner
+    ↓ BehaviorIntent
+CharacterEngine / DesktopEngine / AudioEngine
 ```
+
+`BehaviorProposal` 没有执行权；只有经过策略校验的 `BehaviorIntent` 才能进入执行层。
 
 ---
 
@@ -3883,10 +4167,14 @@ PMX能显示
 [ ] CPU/GPU占用合理
 ```
 
-只有达到这里，我才建议正式进入：
+只有达到这里，我才建议按顺序进入：
 
 ```text
-TTS + AI
+Behavior Runtime
+↓
+AudioEngine
+↓
+BrainEngine
 ```
 
 ---
@@ -3931,48 +4219,57 @@ Character Importer
 
 # 89. 推荐的最终产品形态
 
-最终软件实际上会形成三个 Engine：
+最终软件采用“一个应用编排层 + 四个职责域”：
 
 ```text
-            Desktop Companion
-
-                   │
-       ┌───────────┼────────────┐
-       │           │            │
-       ▼           ▼            ▼
-
- Desktop Engine Character Engine Brain Engine
-
-      Rust        Three.js       Agent
-       │             │             │
-   Windows           PMX      AgentProvider
-   Physics        Animation   MemoryProvider
-   UIA             Morph      VisionProvider
-       │             │             │
-       └─────────────┼─────────────┘
-                     │
-                     ▼
-                  Character
+                         Desktop Companion
+                    CompanionOrchestrator
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       │                      │                      │
+       ▼                      ▼                      ▼
+ DesktopEngine          CharacterEngine         BrainEngine
+     Rust                  Three.js                Rust
+       │                      ▲                      │
+       │ DesktopEvent         │ BehaviorIntent       │ BehaviorProposal
+       └───────────────► BehaviorPlanner ◄───────────┘
+                              │
+                              ▼
+                         AudioEngine
+                     TTS / SFX / Playback
+                              │
+                       LipSyncFrame
+                              │
+                              ▼
+                       CharacterEngine
 ```
 
-这三个 Engine 解耦之后，以后即使：
+四个职责域解耦以后，可以分别替换实现：
 
 ```text
 PMX → VRM
+Three.js → 其他 Renderer
+Web Speech → 原生/云端 TTS
+OpenAI Compatible → 其他 AgentProvider
+SQLite Memory → mem0 / Zep / Letta
 ```
 
-或者：
+替换某一个实现时，其他 Engine 不应发生结构性修改。真正稳定的是 Engine port 和数据契约，而不是某个目录名或第三方库。
+
+BrainEngine 内部的 AI、Memory、Vision 分别通过 Provider trait 插拔；AudioEngine 的 TTS/STT 同样通过 Provider trait 插拔。共享的是安全存储、错误模型和生命周期规范，不是彼此的内部状态。
+
+## 架构不变量
 
 ```text
-Three.js → 其他Renderer
+1. DesktopEngine 是 Windows 与原生窗口状态的唯一写入者
+2. CharacterEngine 是 PMX 骨骼、Morph 和渲染状态的唯一写入者
+3. AudioEngine 是活动播放会话的唯一所有者
+4. BrainEngine 只生成语义 Proposal，不拥有执行权限
+5. BehaviorPlanner 是 Proposal 进入执行层的唯一入口
+6. CompanionOrchestrator 只组合和路由，不吞并各 Engine 业务逻辑
 ```
 
-Desktop Core 和 Agent Core 都不需要推翻。
-
-Brain Engine 内部同样遵循这个解耦原则：AI、记忆、视觉分别对应 `AgentProvider` / `MemoryProvider` / `VisionProvider` 三个独立 trait，替换其中任意一个（例如更换模型服务商、把记忆换成 mem0、接入真实视觉模型）都不需要改动其余两个，也不需要改动 Desktop Engine 或 Character Engine。
-
 ---
-
 # 90. 当前技术决策总结
 
 本项目第一版正式采用：
@@ -4059,6 +4356,40 @@ UI 感知：
 
 ```text
 Windows UI Automation
+```
+
+应用编排：
+
+```text
+CompanionOrchestrator 作为 Composition Root
++
+只负责生命周期、事件路由和跨 Engine 工作流
++
+不实现 Desktop / Character / Brain / Audio 的内部业务
+```
+
+行为与动作：
+
+```text
+MotionCatalog（稳定语义动作 ID）
++
+BehaviorProposal → BehaviorPlanner → BehaviorIntent
++
+System Physical > User > Audio > AI > Idle
++
+AI 只能从用户启用的 allow-list 建议动作
+```
+
+AudioEngine：
+
+```text
+TtsProvider / SttProvider
++
+AudioController / SFX / Playback
++
+AudioEvent / LipSyncFrame
++
+AudioEngine 不直接修改 PMX Morph
 ```
 
 AI 接入方式：
@@ -4168,6 +4499,37 @@ EnumWindows
 Window Platform
 ```
 
-到第 12 步以后：
+到第 12 步以后，桌面伴侣的原生与视觉骨架成立。继续按依赖顺序接入：
 
-> 你的软件就已经不再只是“PMX Viewer”，而是真正开始成为一个 Windows Desktop Companion。
+```text
+13
+MotionCatalog + BehaviorPlanner
+
+↓
+
+14
+AudioController + LipSyncFrame
+
+↓
+
+15
+ConversationOrchestrator + AgentProvider
+```
+
+进入第 15 步以前必须能够证明：
+
+```text
+AgentResponse 不能直接到达 MotionController
+AI 只能看到 AvailableAction[]
+BehaviorProposal 可以被拒绝或延迟
+Falling / Dragged / Landing 拥有系统最高优先级
+AudioEngine 结束或取消时嘴型一定归零
+```
+
+到第 12 步：
+
+> 软件不再只是 PMX Viewer，而是真正成为 Windows Desktop Companion。
+
+到第 15 步：
+
+> 软件才成为具备可控语义行为、声音和 AI 决策能力的 Desktop Companion；智能能力没有破坏 Desktop 与 Character 的底层所有权。

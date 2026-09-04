@@ -1,4 +1,5 @@
 import { CharacterRuntime } from '../character/CharacterRuntime';
+import { getCharacterCatalogEntry } from '../character/CharacterCatalog';
 import {
   loadCharacterSettings,
   saveCharacterSettings,
@@ -14,8 +15,6 @@ import { WebSpeechEngine } from '../speech/WebSpeechEngine';
 import type { SpeechSource } from '../speech/SpeechTypes';
 import { SpeechBubble } from '../ui/SpeechBubble';
 
-const MANIFEST_URL = '/LinGuang/manifest.json';
-
 function requiredElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`缺少页面元素: ${selector}`);
@@ -28,16 +27,18 @@ export async function bootstrap(): Promise<() => void> {
   const statusText = requiredElement<HTMLSpanElement>('[data-status-text]');
   const speech = new SpeechBubble(requiredElement<HTMLDivElement>('#speech-bubble'));
   let settings = loadCharacterSettings();
+  const characterModel = getCharacterCatalogEntry(settings.characterModelId);
+  const manifestUrl = characterModel.manifestUrl;
   const bridge = new DesktopBridge();
   const renderer = new CharacterRenderer(canvas);
 
   statusText.textContent = '正在连接 Windows 桌面…';
   await bridge.connect();
 
-  statusText.textContent = '正在加载陵光模型…';
-  const manifest = await loadModelManifest(MANIFEST_URL);
+  statusText.textContent = `正在加载${characterModel.displayName}模型…`;
+  const manifest = await loadModelManifest(manifestUrl);
   const character = new CharacterRuntime(renderer, bridge, manifest);
-  const report = await character.load(resolveAssetUrl(MANIFEST_URL, manifest.model));
+  const report = await character.load(resolveAssetUrl(manifestUrl, manifest.model));
   character.applySettings(settings);
   const voice = new SpeechController(new WebSpeechEngine(), character);
   const speakWithSettings = (
@@ -60,7 +61,7 @@ export async function bootstrap(): Promise<() => void> {
     status.dataset.kind = missingCore ? 'error' : 'warning';
     statusText.textContent = report.warnings.join(' ') || '模型已加载，但缺少部分生命感映射。';
   } else {
-    statusText.textContent = `陵光已就绪 · ${report.materialCount} 个材质`;
+    statusText.textContent = `${characterModel.displayName}已就绪 · ${report.materialCount} 个材质`;
     window.setTimeout(() => status.classList.add('is-hidden'), 1600);
   }
 
@@ -82,12 +83,14 @@ export async function bootstrap(): Promise<() => void> {
       });
     },
     onSave(nextSettings) {
+      const modelChanged = nextSettings.characterModelId !== characterModel.id;
       settings = nextSettings;
       if (!settings.speechEnabled) voice.cancel();
       saveCharacterSettings(settings);
       character.applySettings(settings);
       character.talk(1.2);
-      speech.show(`${settings.displayName}：配置已保存。`);
+      const restartNote = modelChanged ? ' 模型将在下次启动时切换。' : '';
+      speech.show(`${settings.displayName}：配置已保存。${restartNote}`);
     },
   });
   const pointer = new PointerController(

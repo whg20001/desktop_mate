@@ -1,9 +1,16 @@
+import { CHARACTER_CATALOG, findCharacterCatalogEntry } from '../character/CharacterCatalog';
+import {
+  MOTION_CATALOG,
+  type AiMotionId,
+} from '../character/animation/MotionCatalog';
 import {
   characterSettingsSchema,
   DEFAULT_COLOR_SETTINGS,
   DEFAULT_SPEECH_SETTINGS,
   type CharacterSettings,
 } from './CharacterSettings';
+
+type SettingsPage = 'character' | 'voice' | 'motion';
 
 interface SettingsPanelOptions {
   initialSettings: CharacterSettings;
@@ -19,12 +26,21 @@ function requiredElement<T extends Element>(root: ParentNode, selector: string):
   return element;
 }
 
+function parseSettingsPage(value: string | undefined): SettingsPage | undefined {
+  if (value === 'character' || value === 'voice' || value === 'motion') return value;
+  return undefined;
+}
+
 export class SettingsPanel {
   private readonly form: HTMLFormElement;
   private readonly feedback: HTMLParagraphElement;
   private readonly scaleOutput: HTMLOutputElement;
+  private readonly characterModelSelect: HTMLSelectElement;
+  private readonly characterModelSummary: HTMLElement;
   private readonly voiceSelect: HTMLSelectElement;
   private readonly voicePreviewButton: HTMLButtonElement;
+  private readonly tabButtons: HTMLButtonElement[];
+  private readonly tabPanels: HTMLElement[];
   private settings: CharacterSettings;
   private closing = false;
 
@@ -36,8 +52,15 @@ export class SettingsPanel {
     this.form = requiredElement(element, '#settings-form');
     this.feedback = requiredElement(element, '[data-settings-feedback]');
     this.scaleOutput = requiredElement(element, '[data-scale-output]');
+    this.characterModelSelect = requiredElement(element, '[data-character-model-select]');
+    this.characterModelSummary = requiredElement(element, '[data-character-model-summary]');
     this.voiceSelect = requiredElement(element, '[name="speechVoiceId"]');
     this.voicePreviewButton = requiredElement(element, '[data-preview-voice]');
+    this.tabButtons = [...element.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')];
+    this.tabPanels = [...element.querySelectorAll<HTMLElement>('[data-settings-page]')];
+
+    this.populateCharacterModels();
+    this.populateMotionCatalog();
     this.element.addEventListener('click', this.onPanelClick);
     this.form.addEventListener('submit', this.onSubmit);
     this.form.addEventListener('input', this.onInput);
@@ -52,7 +75,8 @@ export class SettingsPanel {
     this.writeForm();
     this.feedback.textContent = '';
     this.element.hidden = false;
-    requiredElement<HTMLInputElement>(this.form, '[name="displayName"]').focus();
+    this.activatePage('character');
+    this.tabButtons[0]?.focus();
   }
 
   close(): void {
@@ -70,6 +94,8 @@ export class SettingsPanel {
   }
 
   private writeForm(): void {
+    this.ensureSavedCharacterModel();
+    this.characterModelSelect.value = this.settings.characterModelId;
     requiredElement<HTMLInputElement>(this.form, '[name="displayName"]').value =
       this.settings.displayName;
     requiredElement<HTMLInputElement>(this.form, '[name="scale"]').value =
@@ -95,18 +121,29 @@ export class SettingsPanel {
       String(this.settings.speechPitch);
     requiredElement<HTMLInputElement>(this.form, '[name="speechVolume"]').value =
       String(this.settings.speechVolume);
+    requiredElement<HTMLInputElement>(this.form, '[name="aiMotionEnabled"]').checked =
+      this.settings.aiMotionEnabled;
+    this.form
+      .querySelectorAll<HTMLInputElement>('[name="enabledAiMotionIds"]')
+      .forEach((input) => {
+        input.checked = this.settings.enabledAiMotionIds.includes(input.value as AiMotionId);
+      });
     requiredElement<HTMLInputElement>(this.form, '[name="apiBaseUrl"]').value =
       this.settings.apiBaseUrl;
     requiredElement<HTMLInputElement>(this.form, '[name="apiModel"]').value =
       this.settings.apiModel;
+
     this.scaleOutput.value = this.settings.scale.toFixed(2);
+    this.updateCharacterModelSummary();
     this.updateColorOutputs();
     this.updateSpeechControls();
+    this.updateMotionControls();
   }
 
   private parseForm() {
     const data = new FormData(this.form);
     return characterSettingsSchema.safeParse({
+      characterModelId: this.characterModelSelect.value,
       displayName: String(data.get('displayName') ?? ''),
       scale: Number(data.get('scale')),
       followCursor: data.get('followCursor') === 'on',
@@ -129,6 +166,8 @@ export class SettingsPanel {
       speechVolume: Number(
         requiredElement<HTMLInputElement>(this.form, '[name="speechVolume"]').value,
       ),
+      aiMotionEnabled: data.get('aiMotionEnabled') === 'on',
+      enabledAiMotionIds: data.getAll('enabledAiMotionIds').map(String),
       apiBaseUrl: String(data.get('apiBaseUrl') ?? ''),
       apiModel: String(data.get('apiModel') ?? ''),
     });
@@ -146,7 +185,7 @@ export class SettingsPanel {
   private async submit(): Promise<void> {
     const parsed = this.parseForm();
     if (!parsed.success) {
-      this.feedback.textContent = '配置格式无效，请检查基础、声音和 API 参数。';
+      this.feedback.textContent = '配置格式无效，请检查模型、声音、动作和 API 参数。';
       return;
     }
 
@@ -172,6 +211,12 @@ export class SettingsPanel {
     if (target instanceof HTMLInputElement && target.dataset.speechSetting !== undefined) {
       this.updateSpeechControls();
     }
+    if (target instanceof HTMLInputElement && target.dataset.motionSetting !== undefined) {
+      this.updateMotionControls();
+    }
+    if (target instanceof HTMLSelectElement && target.name === 'characterModelId') {
+      this.updateCharacterModelSummary();
+    }
     if (target instanceof HTMLSelectElement && target.name === 'speechVoiceId') {
       const language = target.selectedOptions[0]?.dataset.language;
       if (language) {
@@ -179,6 +224,92 @@ export class SettingsPanel {
       }
     }
   };
+
+  private populateCharacterModels(): void {
+    this.characterModelSelect.replaceChildren();
+    for (const character of CHARACTER_CATALOG) {
+      const option = document.createElement('option');
+      option.value = character.id;
+      option.textContent = character.displayName;
+      option.disabled = !character.available;
+      this.characterModelSelect.append(option);
+    }
+  }
+
+  private ensureSavedCharacterModel(): void {
+    const savedModelExists = [...this.characterModelSelect.options].some(
+      (option) => option.value === this.settings.characterModelId,
+    );
+    if (savedModelExists) return;
+
+    const unavailable = document.createElement('option');
+    unavailable.value = this.settings.characterModelId;
+    unavailable.textContent = '已保存的模型（当前不可用）';
+    this.characterModelSelect.append(unavailable);
+  }
+
+  private updateCharacterModelSummary(): void {
+    const character = findCharacterCatalogEntry(this.characterModelSelect.value);
+    const title = document.createElement('h3');
+    const description = document.createElement('p');
+    const status = document.createElement('span');
+    status.className = 'model-status';
+
+    if (character) {
+      title.textContent = character.displayName;
+      description.textContent = character.description;
+      status.textContent = '已安装';
+      status.dataset.available = 'true';
+    } else {
+      title.textContent = '模型当前不可用';
+      description.textContent = '请检查角色清单和模型素材是否已正确安装。';
+      status.textContent = '不可用';
+      status.dataset.available = 'false';
+    }
+
+    const content = document.createElement('div');
+    content.append(title, description);
+    this.characterModelSummary.replaceChildren(content, status);
+  }
+
+  private populateMotionCatalog(): void {
+    const aiList = requiredElement<HTMLElement>(this.form, '[data-ai-motion-list]');
+    const systemList = requiredElement<HTMLElement>(this.form, '[data-system-motion-list]');
+    aiList.replaceChildren();
+    systemList.replaceChildren();
+
+    for (const motion of MOTION_CATALOG) {
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      const description = document.createElement('p');
+      const scenes = document.createElement('span');
+      title.textContent = motion.displayName;
+      description.textContent = motion.description;
+      scenes.className = 'motion-scenes';
+      scenes.textContent = motion.scenes.join(' · ');
+      content.append(title, description, scenes);
+
+      if (motion.owner === 'ai') {
+        const item = document.createElement('label');
+        item.className = 'motion-item';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.name = 'enabledAiMotionIds';
+        input.value = motion.id;
+        input.dataset.motionControl = '';
+        item.append(input, content);
+        aiList.append(item);
+      } else {
+        const item = document.createElement('article');
+        item.className = 'motion-item motion-item--system';
+        const badge = document.createElement('span');
+        badge.className = 'motion-owner-badge';
+        badge.textContent = '系统接管';
+        item.append(content, badge);
+        systemList.append(item);
+      }
+    }
+  }
 
   private updateColorOutputs(): void {
     for (const name of [
@@ -257,6 +388,18 @@ export class SettingsPanel {
     this.voicePreviewButton.disabled = !enabled;
   }
 
+  private updateMotionControls(): void {
+    const enabled = requiredElement<HTMLInputElement>(
+      this.form,
+      '[name="aiMotionEnabled"]',
+    ).checked;
+    this.form
+      .querySelectorAll<HTMLInputElement>('[data-motion-control]')
+      .forEach((control) => {
+        control.disabled = !enabled;
+      });
+  }
+
   private resetSpeechSettings(): void {
     requiredElement<HTMLInputElement>(this.form, '[name="speechEnabled"]').checked =
       DEFAULT_SPEECH_SETTINGS.speechEnabled;
@@ -305,6 +448,21 @@ export class SettingsPanel {
     }
   }
 
+  private activatePage(page: SettingsPage, focusTab = false): void {
+    let activeButton: HTMLButtonElement | undefined;
+    for (const button of this.tabButtons) {
+      const selected = button.dataset.settingsTab === page;
+      button.classList.toggle('is-active', selected);
+      button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      if (selected) activeButton = button;
+    }
+    for (const panel of this.tabPanels) {
+      panel.hidden = panel.dataset.settingsPage !== page;
+    }
+    if (focusTab) activeButton?.focus();
+  }
+
   private async finishClose(restoreSavedSettings: boolean): Promise<void> {
     if (this.closing) return;
     this.closing = true;
@@ -321,24 +479,58 @@ export class SettingsPanel {
 
   private readonly onPanelClick = (event: MouseEvent): void => {
     const target = event.target;
-    if (target instanceof Element && target.closest('[data-preview-voice]')) {
-      void this.previewVoice();
-      return;
+    if (target instanceof Element) {
+      const tab = target.closest<HTMLButtonElement>('[data-settings-tab]');
+      const page = parseSettingsPage(tab?.dataset.settingsTab);
+      if (page) {
+        this.activatePage(page);
+        return;
+      }
+      if (target.closest('[data-preview-voice]')) {
+        void this.previewVoice();
+        return;
+      }
+      if (target.closest('[data-reset-speech]')) {
+        this.resetSpeechSettings();
+        return;
+      }
+      if (target.closest('[data-reset-colors]')) {
+        this.resetColorSettings();
+        return;
+      }
+      if (target.closest('[data-settings-close]')) {
+        this.close();
+        return;
+      }
     }
-    if (target instanceof Element && target.closest('[data-reset-speech]')) {
-      this.resetSpeechSettings();
-      return;
-    }
-    if (target instanceof Element && target.closest('[data-reset-colors]')) {
-      this.resetColorSettings();
-      return;
-    }
-    if (target === this.element || (target instanceof Element && target.closest('[data-settings-close]'))) {
-      this.close();
-    }
+    if (target === this.element) this.close();
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && !this.element.hidden) this.close();
+    if (event.key === 'Escape' && !this.element.hidden) {
+      this.close();
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement) || !target.dataset.settingsTab) return;
+    const currentIndex = this.tabButtons.indexOf(target);
+    if (currentIndex < 0) return;
+
+    let nextIndex: number | undefined;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % this.tabButtons.length;
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      nextIndex = (currentIndex - 1 + this.tabButtons.length) % this.tabButtons.length;
+    }
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = this.tabButtons.length - 1;
+    if (nextIndex === undefined) return;
+
+    const page = parseSettingsPage(this.tabButtons[nextIndex]?.dataset.settingsTab);
+    if (!page) return;
+    event.preventDefault();
+    this.activatePage(page, true);
   };
 }

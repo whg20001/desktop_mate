@@ -11,7 +11,7 @@
 - 全局光标驱动点击穿透与 LookAt，点击角色会触发问候动作、系统语音、说话口型和气泡；
 - 统一程序化动作控制器生成 Idle、Greeting、Dragged、Falling、Landing 与 Talking，无需 VMD；
 - 自动眨眼、可选呼吸（默认关闭）和方向正确的 LookAt；
-- 双击角色打开独立配置窗口，可设置角色外观、系统音色、语言、音量、语速、音调及非敏感 API 预设；
+- 双击角色打开独立的 4:3 配置中心，通过“助手模型 / 声音配置 / 动作配置”三页管理角色外观、语音参数、AI 可选动作及非敏感 API 预设；
 - 原生窗口拖拽、Rust 重力、任务栏工作区地面和窗口顶部碰撞；
 - Win32/DWM 窗口枚举，多显示器负坐标和 Per-Monitor DPI 数据；
 - SpeechController、TTS/STT Provider 与 RMS/viseme 动作接口；当前使用无密钥的 Web Speech 调试适配器，STT 尚未启用；

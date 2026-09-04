@@ -4,6 +4,7 @@ import { characterSettingsSchema, DEFAULT_CHARACTER_SETTINGS } from './Character
 describe('character settings', () => {
   it('keeps the character still by default', () => {
     expect(DEFAULT_CHARACTER_SETTINGS).toMatchObject({
+      characterModelId: 'lingguang',
       scale: 1,
       followCursor: true,
       breathing: false,
@@ -16,10 +17,12 @@ describe('character settings', () => {
       speechRate: 1,
       speechPitch: 1,
       speechVolume: 1,
+      aiMotionEnabled: true,
+      enabledAiMotionIds: ['idle', 'greeting', 'talking'],
     });
   });
 
-  it('fills color defaults for settings saved by older versions', () => {
+  it('fills new defaults for settings saved by older versions', () => {
     expect(characterSettingsSchema.parse({ displayName: '陵光' })).toMatchObject({
       materialAmbientScale: 0.25,
       hemisphereLightIntensity: 0.3,
@@ -30,6 +33,8 @@ describe('character settings', () => {
       speechRate: 1,
       speechPitch: 1,
       speechVolume: 1,
+      aiMotionEnabled: true,
+      enabledAiMotionIds: ['idle', 'greeting', 'talking'],
     });
   });
 
@@ -56,5 +61,10 @@ describe('character settings', () => {
     expect(characterSettingsSchema.safeParse({ speechVolume: -0.01 }).success).toBe(false);
     expect(characterSettingsSchema.safeParse({ speechVolume: 1.01 }).success).toBe(false);
     expect(characterSettingsSchema.safeParse({ speechLanguage: '' }).success).toBe(false);
+  });
+  it('rejects unknown AI motion identifiers', () => {
+    expect(
+      characterSettingsSchema.safeParse({ enabledAiMotionIds: ['unknown'] }).success,
+    ).toBe(false);
   });
 });

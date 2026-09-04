@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { AI_MOTION_IDS, DEFAULT_AI_MOTION_IDS } from '../character/animation/MotionCatalog';
+import { DEFAULT_CHARACTER_MODEL_ID } from '../character/CharacterCatalog';
 
 const STORAGE_KEY = 'desktop-companion.character-settings';
 
@@ -18,6 +20,7 @@ export const DEFAULT_SPEECH_SETTINGS = {
 } as const;
 
 export const characterSettingsSchema = z.object({
+  characterModelId: z.string().trim().min(1).max(128).default(DEFAULT_CHARACTER_MODEL_ID),
   displayName: z.string().trim().min(1).max(32).default('陵光'),
   scale: z.number().min(0.75).max(1.25).default(1),
   followCursor: z.boolean().default(true),
@@ -52,6 +55,11 @@ export const characterSettingsSchema = z.object({
   speechRate: z.number().min(0.5).max(2).default(DEFAULT_SPEECH_SETTINGS.speechRate),
   speechPitch: z.number().min(0).max(2).default(DEFAULT_SPEECH_SETTINGS.speechPitch),
   speechVolume: z.number().min(0).max(1).default(DEFAULT_SPEECH_SETTINGS.speechVolume),
+  aiMotionEnabled: z.boolean().default(true),
+  enabledAiMotionIds: z
+    .array(z.enum(AI_MOTION_IDS))
+    .max(AI_MOTION_IDS.length)
+    .default([...DEFAULT_AI_MOTION_IDS]),
   apiBaseUrl: z.string().trim().max(2048).default(''),
   apiModel: z.string().trim().max(128).default(''),
 });
