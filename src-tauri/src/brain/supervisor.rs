@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::{
     client::BrainClient,
-    locality::LocalEndpoint,
+    locality::{validate_local_graph_endpoint, LocalEndpoint},
     model::{BrainPhase, BrainSettings, BrainStatus},
 };
 
@@ -618,6 +618,19 @@ fn validate_settings(settings: BrainSettings) -> Result<BrainSettings, String> {
     }
     if settings.embedding_base_url.is_empty() != settings.embedding_model.is_empty() {
         return Err("local embedding endpoint and model must be configured together".into());
+    }
+    validate_local_graph_endpoint(&settings.graphiti_uri)
+        .map_err(|error| format!("Graphiti endpoint was rejected: {error}"))?;
+    for (name, value) in [
+        ("Graphiti database", &settings.graphiti_database),
+        ("Graphiti user", &settings.graphiti_user),
+    ] {
+        if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+            return Err(format!("{name} is invalid"));
+        }
+    }
+    if !settings.memory_minimum_importance.is_finite() {
+        return Err("memory minimum importance must be finite".into());
     }
     Ok(settings)
 }

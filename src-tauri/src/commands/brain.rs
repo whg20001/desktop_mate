@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::brain::{
     model::{
         BrainMemory, BrainSettings, BrainStatus, CharacterResponse, ConversationPayload,
-        ConversationRequest, ConversationScope,
+        ConversationRequest, ConversationScope, MemoryManagerStatus,
     },
     BrainSupervisor,
 };
@@ -99,6 +99,57 @@ pub async fn delete_brain_memory(
     state
         .ready_client()?
         .delete_memory(&scope, &memory_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_memory_status(
+    state: State<'_, Arc<BrainSupervisor>>,
+) -> CommandResult<MemoryManagerStatus> {
+    state.ready_client()?.memory_status().await
+}
+
+#[tauri::command]
+pub async fn approve_brain_memory(
+    scope: ConversationScope,
+    memory_id: String,
+    state: State<'_, Arc<BrainSupervisor>>,
+) -> CommandResult<()> {
+    scope.validate()?;
+    validate_memory_id(&memory_id)?;
+    state
+        .ready_client()?
+        .decide_memory(&scope, &memory_id, true)
+        .await
+}
+
+#[tauri::command]
+pub async fn reject_brain_memory(
+    scope: ConversationScope,
+    memory_id: String,
+    state: State<'_, Arc<BrainSupervisor>>,
+) -> CommandResult<()> {
+    scope.validate()?;
+    validate_memory_id(&memory_id)?;
+    state
+        .ready_client()?
+        .decide_memory(&scope, &memory_id, false)
+        .await
+}
+
+#[tauri::command]
+pub async fn rebuild_brain_memory(
+    scope: ConversationScope,
+    provider: String,
+    state: State<'_, Arc<BrainSupervisor>>,
+) -> CommandResult<usize> {
+    scope.validate()?;
+    if !matches!(provider.as_str(), "mem0" | "graphiti") {
+        return Err("memory provider is invalid".into());
+    }
+    state
+        .ready_client()?
+        .rebuild_memory(&scope, &provider)
         .await
 }
 

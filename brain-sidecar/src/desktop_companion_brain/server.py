@@ -32,7 +32,7 @@ class BrainApplication:
         self.config = config
         self.sessions = ConversationSessionStore(config.data_dir / "conversations.sqlite3")
         self.llm = llm or _create_llm(config)
-        self.memory = memory or create_memory(config)
+        self.memory = memory or create_memory(config, self.sessions)
         self.orchestrator = (
             ConversationOrchestrator(config, self.sessions, self.llm, self.memory)
             if self.llm is not None
@@ -60,6 +60,7 @@ class BrainApplication:
                 "components": {
                     "llm": {"ready": llm_ready, "detail": llm_detail},
                     "memory": {"ready": memory_ready, "detail": memory_detail},
+                    "memoryManager": self.memory.status(),
                     "embedding": {
                         "ready": embedding_ready,
                         "detail": embedding_detail,
@@ -131,6 +132,24 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     {"records": self.server.application.memory.list(scope)},
                 )
+            elif self.path == "/v1/memories/status":
+                self._json(HTTPStatus.OK, self.server.application.memory.status())
+            elif self.path == "/v1/memories/approve":
+                scope = validate_scope(body.get("scope"))
+                memory_id = _memory_id(body.get("memoryId"))
+                self.server.application.memory.approve(memory_id, scope)
+                self._json(HTTPStatus.OK, {"status": "approved"})
+            elif self.path == "/v1/memories/reject":
+                scope = validate_scope(body.get("scope"))
+                memory_id = _memory_id(body.get("memoryId"))
+                self.server.application.memory.reject(memory_id, scope)
+                self._json(HTTPStatus.OK, {"status": "rejected"})
+            elif self.path == "/v1/memories/rebuild":
+                scope_value = body.get("scope")
+                scope = validate_scope(scope_value) if scope_value is not None else None
+                provider = _memory_id(body.get("provider"))
+                queued = self.server.application.memory.rebuild(provider, scope)
+                self._json(HTTPStatus.OK, {"status": "queued", "count": queued})
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "route not found"})
         except (ValueError, RuntimeError) as error:
@@ -241,3 +260,11 @@ def _embedding_health(config: SidecarConfig) -> tuple[bool, str]:
         return True, "local embedding provider is reachable"
     except RuntimeError as error:
         return False, str(error)
+
+
+def _memory_id(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 256:
+        raise ValueError("memory identifier is invalid")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("memory identifier is invalid")
+    return value.strip()

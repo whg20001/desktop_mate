@@ -392,10 +392,50 @@
                     <span>单次召回上限</span>
                     <input name="memoryRecallLimit" data-memory-control type="number" min="1" max="20" step="1" />
                   </label>
+                  <div class="settings-toggle-grid">
+                    <label class="toggle-row">
+                      <input name="memoryApprovalRequired" data-memory-control type="checkbox" />
+                      <span>新记忆写入前需要人工批准</span>
+                    </label>
+                    <label>
+                      <span>最低重要性（0–1）</span>
+                      <input name="memoryMinimumImportance" data-memory-control type="number" min="0" max="1" step="0.05" />
+                    </label>
+                    <label>
+                      <span>已删除/拒绝记录保留天数</span>
+                      <input name="memoryRetentionDays" data-memory-control type="number" min="1" max="3650" step="1" />
+                    </label>
+                  </div>
                   <div class="color-controls-footer">
                     <p class="settings-note">会话、向量和脱敏日志固定写入本机应用数据目录；日志不记录原始对话、Prompt、令牌或记忆正文。</p>
                     <button type="button" class="settings-utility-button" data-reset-brain>恢复本地默认</button>
                   </div>
+                </fieldset>
+
+                <fieldset class="settings-section">
+                  <legend>Phase II 时间图谱（可选）</legend>
+                  <label class="toggle-row settings-master-toggle">
+                    <input name="graphitiEnabled" data-brain-setting data-memory-control type="checkbox" />
+                    <span>
+                      <strong>启用本机 Graphiti + Neo4j</strong>
+                      <small>默认关闭；不可用时不会影响 SQLite、Mem0 或正常对话。</small>
+                    </span>
+                  </label>
+                  <div class="settings-field-grid">
+                    <label>
+                      <span>Neo4j Bolt URL</span>
+                      <input name="graphitiUri" data-graphiti-control maxlength="2048" autocomplete="off" />
+                    </label>
+                    <label>
+                      <span>数据库</span>
+                      <input name="graphitiDatabase" data-graphiti-control maxlength="128" autocomplete="off" />
+                    </label>
+                    <label>
+                      <span>用户名</span>
+                      <input name="graphitiUser" data-graphiti-control maxlength="128" autocomplete="off" />
+                    </label>
+                  </div>
+                  <p class="settings-note">密码不会进入此界面或 settings.json；仅从 DESKTOP_COMPANION_GRAPHITI_PASSWORD 环境变量读取。只接受本机 bolt:// 回环地址；不接受具有路由发现能力的 neo4j://。</p>
                 </fieldset>
 
                 <article class="settings-info-card">
@@ -417,6 +457,13 @@
                     </button>
                   </header>
                   <p class="settings-note">可以在本机查看、修正或删除 Mem0 中的记忆。操作不会发送到云端。</p>
+                  <div class="memory-provider-status" data-memory-provider-status>
+                    <p class="settings-note">点击“刷新列表”检查 SQLite、Mem0 与 Graphiti 状态。</p>
+                  </div>
+                  <div class="speech-actions">
+                    <button type="button" class="settings-utility-button" data-rebuild-memory="mem0">重建 Mem0 索引</button>
+                    <button type="button" class="settings-utility-button" data-rebuild-memory="graphiti">重建 Graphiti 索引</button>
+                  </div>
                   <div class="memory-list" data-memory-list>
                     <p class="settings-note">点击“刷新列表”读取当前角色的长期记忆。</p>
                   </div>

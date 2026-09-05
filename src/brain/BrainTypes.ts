@@ -28,6 +28,13 @@ export const brainSettingsSchema = z.object({
   memoryWriteEnabled: z.boolean(),
   recallLimit: z.number().int().min(1).max(20),
   requestTimeoutSeconds: z.number().int().min(2).max(120),
+  memoryApprovalRequired: z.boolean(),
+  memoryMinimumImportance: z.number().min(0).max(1),
+  memoryRetentionDays: z.number().int().min(1).max(3650),
+  graphitiEnabled: z.boolean(),
+  graphitiUri: z.string(),
+  graphitiDatabase: z.string(),
+  graphitiUser: z.string(),
 });
 
 export const conversationScopeSchema = z.object({
@@ -60,9 +67,30 @@ export const brainMemorySchema = z.object({
   id: z.string().min(1).max(256),
   content: z.string().min(1).max(8000),
   score: z.number(),
+  status: z.enum(['pending', 'approved']).default('approved'),
+  kind: z.enum(['semantic', 'episodic']).default('semantic'),
+  importance: z.number().min(0).max(1).default(0.5),
+  sources: z.array(z.string()).default([]),
+  providers: z.record(z.string(), z.string().nullable()).default({}),
   metadata: z.unknown().default({}),
   createdAt: z.string().nullable().optional(),
   updatedAt: z.string().nullable().optional(),
+});
+
+export const memoryManagerStatusSchema = z.object({
+  enabled: z.boolean(),
+  ready: z.boolean(),
+  approvalRequired: z.boolean().default(false),
+  inferenceReady: z.boolean().default(false),
+  providers: z.array(
+    z.object({
+      id: z.string(),
+      ready: z.boolean(),
+      detail: z.string(),
+    }),
+  ),
+  events: z.record(z.string(), z.number()).default({}),
+  deliveries: z.record(z.string(), z.number()).default({}),
 });
 
 export type BrainStatus = z.infer<typeof brainStatusSchema>;
@@ -70,3 +98,4 @@ export type BrainSettings = z.infer<typeof brainSettingsSchema>;
 export type ConversationScope = z.infer<typeof conversationScopeSchema>;
 export type CharacterResponse = z.infer<typeof characterResponseSchema>;
 export type BrainMemory = z.infer<typeof brainMemorySchema>;
+export type MemoryManagerStatus = z.infer<typeof memoryManagerStatusSchema>;

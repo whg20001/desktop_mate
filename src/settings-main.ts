@@ -58,6 +58,10 @@ void refreshBrainStatus();
 const statusTimer = window.setInterval(() => void refreshBrainStatus(), 2000);
 const memoryList = requiredElement<HTMLElement>('[data-memory-list]');
 const refreshMemories = requiredElement<HTMLButtonElement>('[data-refresh-memories]');
+const providerStatus = requiredElement<HTMLElement>('[data-memory-provider-status]');
+const rebuildButtons = [
+  ...document.querySelectorAll<HTMLButtonElement>('[data-rebuild-memory]'),
+];
 
 function memoryScope() {
   return {
@@ -71,7 +75,18 @@ async function renderMemories(): Promise<void> {
   refreshMemories.disabled = true;
   memoryList.textContent = '正在读取本地记忆…';
   try {
-    const memories = await brain.listMemories(memoryScope());
+    const [memories, manager] = await Promise.all([
+      brain.listMemories(memoryScope()),
+      brain.memoryStatus(),
+    ]);
+    providerStatus.replaceChildren(
+      ...manager.providers.map((provider) => {
+        const row = document.createElement('p');
+        row.className = 'settings-note';
+        row.textContent = `${provider.id}：${provider.ready ? '就绪' : '降级'} · ${provider.detail}`;
+        return row;
+      }),
+    );
     if (memories.length === 0) {
       memoryList.textContent = '当前角色还没有长期记忆。';
       return;
@@ -84,6 +99,10 @@ async function renderMemories(): Promise<void> {
         input.value = memory.content;
         input.maxLength = 2000;
         input.setAttribute('aria-label', '记忆内容');
+        input.readOnly = memory.status === 'pending';
+        const meta = document.createElement('p');
+        meta.className = 'settings-note';
+        meta.textContent = `${memory.kind === 'episodic' ? '情景记忆' : '语义记忆'} · 重要性 ${memory.importance.toFixed(2)} · ${memory.sources.join(' + ') || 'SQLite'}`;
         const actions = document.createElement('div');
         const save = document.createElement('button');
         save.type = 'button';
@@ -110,8 +129,30 @@ async function renderMemories(): Promise<void> {
             remove.disabled = false;
           }
         });
-        actions.append(save, remove);
-        item.append(input, actions);
+        if (memory.status === 'pending') {
+          const approve = document.createElement('button');
+          approve.type = 'button';
+          approve.className = 'settings-utility-button';
+          approve.textContent = '批准';
+          approve.addEventListener('click', async () => {
+            approve.disabled = true;
+            await brain.approveMemory(memoryScope(), memory.id);
+            await renderMemories();
+          });
+          const reject = document.createElement('button');
+          reject.type = 'button';
+          reject.className = 'settings-utility-button memory-delete-button';
+          reject.textContent = '拒绝';
+          reject.addEventListener('click', async () => {
+            reject.disabled = true;
+            await brain.rejectMemory(memoryScope(), memory.id);
+            await renderMemories();
+          });
+          actions.append(approve, reject);
+        } else {
+          actions.append(save, remove);
+        }
+        item.append(meta, input, actions);
         return item;
       }),
     );
@@ -124,11 +165,28 @@ async function renderMemories(): Promise<void> {
 }
 
 refreshMemories.addEventListener('click', () => void renderMemories());
+for (const button of rebuildButtons) {
+  button.addEventListener('click', async () => {
+    const provider = button.dataset.rebuildMemory;
+    if (!provider) return;
+    button.disabled = true;
+    try {
+      const count = await brain.rebuildMemory(memoryScope(), provider);
+      button.title = `已排队 ${count} 条本地记忆`;
+      await renderMemories();
+    } catch (error: unknown) {
+      button.title = error instanceof Error ? error.message : '索引重建失败';
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 
 const dispose: Array<() => void> = [
   () => panel.dispose(),
   () => window.clearInterval(statusTimer),
   () => refreshMemories.replaceWith(refreshMemories.cloneNode(true)),
+  () => rebuildButtons.forEach((button) => button.replaceWith(button.cloneNode(true))),
 ];
 if ('__TAURI_INTERNALS__' in window) {
   const settingsWindow = WebviewWindow.getCurrent();

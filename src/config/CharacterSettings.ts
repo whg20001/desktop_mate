@@ -29,6 +29,13 @@ export const DEFAULT_BRAIN_SETTINGS = {
   memoryRecallEnabled: true,
   memoryWriteEnabled: true,
   memoryRecallLimit: 6,
+  memoryApprovalRequired: false,
+  memoryMinimumImportance: 0.55,
+  memoryRetentionDays: 365,
+  graphitiEnabled: false,
+  graphitiUri: 'bolt://127.0.0.1:7687',
+  graphitiDatabase: 'neo4j',
+  graphitiUser: 'neo4j',
 } as const;
 
 function localEndpoint(value: string): boolean {
@@ -48,6 +55,29 @@ function localEndpoint(value: string): boolean {
       (url.hostname === 'localhost' ||
         url.hostname === '[::1]' ||
         isIpv4Loopback)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function localGraphEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const ipv4 = url.hostname.split('.').map(Number);
+    const isIpv4Loopback =
+      ipv4.length === 4 &&
+      ipv4[0] === 127 &&
+      ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+    return (
+      url.protocol === 'bolt:' &&
+      Boolean(url.port) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      (url.pathname === '' || url.pathname === '/') &&
+      (url.hostname === 'localhost' || url.hostname === '[::1]' || isIpv4Loopback)
     );
   } catch {
     return false;
@@ -129,6 +159,27 @@ export const characterSettingsSchema = z.object({
     .min(1)
     .max(20)
     .default(DEFAULT_BRAIN_SETTINGS.memoryRecallLimit),
+  memoryApprovalRequired: z.boolean().default(DEFAULT_BRAIN_SETTINGS.memoryApprovalRequired),
+  memoryMinimumImportance: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(DEFAULT_BRAIN_SETTINGS.memoryMinimumImportance),
+  memoryRetentionDays: z
+    .number()
+    .int()
+    .min(1)
+    .max(3650)
+    .default(DEFAULT_BRAIN_SETTINGS.memoryRetentionDays),
+  graphitiEnabled: z.boolean().default(DEFAULT_BRAIN_SETTINGS.graphitiEnabled),
+  graphitiUri: z
+    .string()
+    .trim()
+    .max(2048)
+    .refine(localGraphEndpoint, 'Graphiti 地址必须是本机 bolt:// 回环地址')
+    .default(DEFAULT_BRAIN_SETTINGS.graphitiUri),
+  graphitiDatabase: z.string().trim().min(1).max(128).default('neo4j'),
+  graphitiUser: z.string().trim().min(1).max(128).default('neo4j'),
 });
 
 export type CharacterSettings = z.infer<typeof characterSettingsSchema>;

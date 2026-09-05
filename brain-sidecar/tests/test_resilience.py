@@ -59,6 +59,10 @@ class ReadyMemory:
     def ready(self) -> tuple[bool, str]:
         return True, "ready"
 
+    def status(self) -> dict[str, Any]:
+        ready, _ = self.ready()
+        return {"enabled": True, "ready": ready, "providers": []}
+
     def search(
         self, query: str, scope: dict[str, str], limit: int
     ) -> list[dict[str, Any]]:

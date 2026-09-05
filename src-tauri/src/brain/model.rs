@@ -56,6 +56,20 @@ pub struct BrainSettings {
     pub recall_limit: usize,
     #[serde(default = "default_timeout")]
     pub request_timeout_seconds: u64,
+    #[serde(default)]
+    pub graphiti_enabled: bool,
+    #[serde(default = "default_graphiti_uri")]
+    pub graphiti_uri: String,
+    #[serde(default = "default_graphiti_database")]
+    pub graphiti_database: String,
+    #[serde(default = "default_graphiti_user")]
+    pub graphiti_user: String,
+    #[serde(default)]
+    pub memory_approval_required: bool,
+    #[serde(default = "default_memory_minimum_importance")]
+    pub memory_minimum_importance: f32,
+    #[serde(default = "default_memory_retention_days")]
+    pub memory_retention_days: usize,
 }
 
 impl Default for BrainSettings {
@@ -71,6 +85,13 @@ impl Default for BrainSettings {
             memory_write_enabled: true,
             recall_limit: default_recall_limit(),
             request_timeout_seconds: default_timeout(),
+            graphiti_enabled: false,
+            graphiti_uri: default_graphiti_uri(),
+            graphiti_database: default_graphiti_database(),
+            graphiti_user: default_graphiti_user(),
+            memory_approval_required: false,
+            memory_minimum_importance: default_memory_minimum_importance(),
+            memory_retention_days: default_memory_retention_days(),
         }
     }
 }
@@ -81,9 +102,14 @@ impl BrainSettings {
         self.llm_model = self.llm_model.trim().to_string();
         self.embedding_base_url = self.embedding_base_url.trim().to_string();
         self.embedding_model = self.embedding_model.trim().to_string();
+        self.graphiti_uri = self.graphiti_uri.trim().to_string();
+        self.graphiti_database = self.graphiti_database.trim().to_string();
+        self.graphiti_user = self.graphiti_user.trim().to_string();
         self.embedding_dimensions = self.embedding_dimensions.clamp(64, 8192);
         self.recall_limit = self.recall_limit.clamp(1, 20);
         self.request_timeout_seconds = self.request_timeout_seconds.clamp(2, 120);
+        self.memory_minimum_importance = self.memory_minimum_importance.clamp(0.0, 1.0);
+        self.memory_retention_days = self.memory_retention_days.clamp(1, 3650);
         self
     }
 }
@@ -102,6 +128,26 @@ const fn default_embedding_dimensions() -> usize {
 
 const fn default_timeout() -> u64 {
     30
+}
+
+fn default_graphiti_uri() -> String {
+    "bolt://127.0.0.1:7687".into()
+}
+
+fn default_graphiti_database() -> String {
+    "neo4j".into()
+}
+
+fn default_graphiti_user() -> String {
+    "neo4j".into()
+}
+
+const fn default_memory_minimum_importance() -> f32 {
+    0.55
+}
+
+const fn default_memory_retention_days() -> usize {
+    365
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -235,7 +281,42 @@ pub struct BrainMemory {
     pub content: String,
     pub score: f32,
     #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub importance: f32,
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub providers: serde_json::Value,
+    #[serde(default)]
     pub metadata: serde_json::Value,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryProviderStatus {
+    pub id: String,
+    pub ready: bool,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryManagerStatus {
+    pub enabled: bool,
+    pub ready: bool,
+    #[serde(default)]
+    pub approval_required: bool,
+    #[serde(default)]
+    pub inference_ready: bool,
+    #[serde(default)]
+    pub providers: Vec<MemoryProviderStatus>,
+    #[serde(default)]
+    pub events: serde_json::Value,
+    #[serde(default)]
+    pub deliveries: serde_json::Value,
 }

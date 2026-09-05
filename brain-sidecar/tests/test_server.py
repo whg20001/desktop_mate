@@ -25,6 +25,9 @@ class FakeMemory:
     def ready(self):
         return True, "disabled for test"
 
+    def status(self):
+        return {"enabled": False, "ready": True, "providers": []}
+
     def search(self, query, scope, limit):
         return []
 

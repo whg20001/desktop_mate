@@ -5,12 +5,14 @@ import {
   brainSettingsSchema,
   brainStatusSchema,
   brainMemorySchema,
+  memoryManagerStatusSchema,
   characterResponseSchema,
   type BrainSettings,
   type BrainMemory,
   type BrainStatus,
   type CharacterResponse,
   type ConversationScope,
+  type MemoryManagerStatus,
 } from './BrainTypes';
 
 function isTauri(): boolean {
@@ -74,5 +76,23 @@ export class BrainBridge {
 
   async deleteMemory(scope: ConversationScope, memoryId: string): Promise<void> {
     await invoke('delete_brain_memory', { scope, memoryId });
+  }
+
+  async memoryStatus(): Promise<MemoryManagerStatus> {
+    return memoryManagerStatusSchema.parse(await invoke('get_memory_status'));
+  }
+
+  async approveMemory(scope: ConversationScope, memoryId: string): Promise<void> {
+    await invoke('approve_brain_memory', { scope, memoryId });
+  }
+
+  async rejectMemory(scope: ConversationScope, memoryId: string): Promise<void> {
+    await invoke('reject_brain_memory', { scope, memoryId });
+  }
+
+  async rebuildMemory(scope: ConversationScope, provider: string): Promise<number> {
+    return z.number().int().nonnegative().parse(
+      await invoke('rebuild_brain_memory', { scope, provider }),
+    );
   }
 }

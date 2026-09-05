@@ -13,5 +13,12 @@ export function brainSettingsFromCharacter(settings: CharacterSettings): BrainSe
     memoryWriteEnabled: settings.memoryWriteEnabled,
     recallLimit: settings.memoryRecallLimit,
     requestTimeoutSeconds: 30,
+    memoryApprovalRequired: settings.memoryApprovalRequired,
+    memoryMinimumImportance: settings.memoryMinimumImportance,
+    memoryRetentionDays: settings.memoryRetentionDays,
+    graphitiEnabled: settings.graphitiEnabled,
+    graphitiUri: settings.graphitiUri,
+    graphitiDatabase: settings.graphitiDatabase,
+    graphitiUser: settings.graphitiUser,
   };
 }

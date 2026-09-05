@@ -102,4 +102,15 @@ describe('character settings', () => {
     expect(characterSettingsSchema.safeParse({ embeddingDimensions: 63 }).success).toBe(false);
     expect(characterSettingsSchema.safeParse({ embeddingDimensions: 8193 }).success).toBe(false);
   });
+
+  it('rejects Graphiti endpoints with a non-root path', () => {
+    expect(
+      characterSettingsSchema.safeParse({ graphitiUri: 'bolt://127.0.0.1:7687/other' })
+        .success,
+    ).toBe(false);
+    expect(
+      characterSettingsSchema.safeParse({ graphitiUri: 'neo4j://localhost:7687' })
+        .success,
+    ).toBe(false);
+  });
 });

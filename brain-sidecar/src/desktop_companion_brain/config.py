@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .security import LocalityError, local_data_directory, local_http_url
+from .security import LocalityError, local_data_directory, local_graph_url, local_http_url
 
 
 def _bool(value: Any, default: bool) -> bool:
@@ -35,6 +35,13 @@ class SidecarConfig:
     recall_limit: int
     request_timeout_seconds: float
     embedding_dimensions: int = 768
+    graphiti_enabled: bool = False
+    graphiti_uri: str = "bolt://127.0.0.1:7687"
+    graphiti_database: str = "neo4j"
+    graphiti_user: str = "neo4j"
+    memory_approval_required: bool = False
+    memory_minimum_importance: float = 0.55
+    memory_retention_days: int = 365
 
     @classmethod
     def from_environment(cls) -> "SidecarConfig":
@@ -60,6 +67,11 @@ class SidecarConfig:
             llm_url = local_http_url(llm_url)
         if embedding_url:
             embedding_url = local_http_url(embedding_url)
+        graphiti_enabled = _bool(persisted.get("graphitiEnabled"), False)
+        graphiti_uri = str(
+            persisted.get("graphitiUri", "bolt://127.0.0.1:7687")
+        ).strip()
+        graphiti_uri = local_graph_url(graphiti_uri)
 
         return cls(
             host=host,
@@ -82,6 +94,24 @@ class SidecarConfig:
             embedding_dimensions=max(
                 64,
                 min(int(persisted.get("embeddingDimensions", 768)), 8192),
+            ),
+            graphiti_enabled=graphiti_enabled,
+            graphiti_uri=graphiti_uri,
+            graphiti_database=_identifier(
+                persisted.get("graphitiDatabase", "neo4j"), "graphiti database"
+            ),
+            graphiti_user=_identifier(
+                persisted.get("graphitiUser", "neo4j"), "graphiti user"
+            ),
+            memory_approval_required=_bool(
+                persisted.get("memoryApprovalRequired"), False
+            ),
+            memory_minimum_importance=max(
+                0.0,
+                min(float(persisted.get("memoryMinimumImportance", 0.55)), 1.0),
+            ),
+            memory_retention_days=max(
+                1, min(int(persisted.get("memoryRetentionDays", 365)), 3650)
             ),
         )
 
@@ -147,3 +177,14 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("brain settings must be a JSON object")
     return value
+
+
+def _identifier(value: Any, name: str) -> str:
+    text = str(value).strip()
+    if (
+        not text
+        or len(text) > 128
+        or any(ord(character) < 32 or ord(character) == 127 for character in text)
+    ):
+        raise ValueError(f"{name} is invalid")
+    return text

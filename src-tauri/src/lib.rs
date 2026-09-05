@@ -13,8 +13,9 @@ use tauri::Manager;
 
 use commands::{
     brain::{
-        configure_brain, converse, delete_brain_memory, get_brain_settings, get_brain_status,
-        list_brain_memories, update_brain_memory,
+        approve_brain_memory, configure_brain, converse, delete_brain_memory, get_brain_settings,
+        get_brain_status, get_memory_status, list_brain_memories, rebuild_brain_memory,
+        reject_brain_memory, update_brain_memory,
     },
     character::{begin_drag, end_drag, update_hit_regions},
     desktop::get_desktop_world,
@@ -42,6 +43,10 @@ pub fn run() {
             list_brain_memories,
             update_brain_memory,
             delete_brain_memory,
+            get_memory_status,
+            approve_brain_memory,
+            reject_brain_memory,
+            rebuild_brain_memory,
         ])
         .build(tauri::generate_context!())
         .expect("desktop companion failed to build")

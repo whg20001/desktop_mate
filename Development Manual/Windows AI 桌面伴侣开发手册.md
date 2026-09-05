@@ -241,7 +241,7 @@ CompanionOrchestrator     → 跨 Engine 的应用工作流
 ConversationOrchestrator  → BrainEngine 内的一次对话工作流
 ```
 
-Phase I 只有一个长期记忆后端，不额外维护空壳 Manager。ConversationOrchestrator 直接组合会话事实源与 `MemoryPort`：
+Phase II 已引入统一 `MemoryManager`。ConversationOrchestrator 仍只依赖窄 `MemoryPort`，不知道 Mem0、Graphiti 或 outbox 的实现：
 
 ```text
                          BrainEngine
@@ -251,13 +251,14 @@ Phase I 只有一个长期记忆后端，不额外维护空壳 Manager。Convers
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
    LocalLlmProvider   ConversationSessionStore   MemoryPort
-       Agent               Session/Outbox          │
+       Agent              Session/Turn Outbox       │
                                                   ▼
-                                             Mem0Memory
-                                       Semantic / Episodic
+                                      MemoryManager / MemoryPolicy
+                                          │                 │
+                                   Mem0Provider      GraphitiProvider
 ```
 
-Mem0 的提取 LLM 和 Embedding 都显式指向本机 API，`MemoryPort` 隔离 Mem0 SDK。只有 Phase II 真正加入 Graphiti、出现多后端查询和写入策略时，才引入 `MemoryManager / MemoryPolicy`；Graphiti 与 Mem0 必须并列，不形成 `Mem0 → Graphiti` 的硬依赖链。动作建议仍由 BrainEngine 生成语义 ID，并由外部 `BehaviorPlanner` 最终批准。
+本地候选提取与 Mem0/Graphiti 使用的 LLM、Embedding 都显式指向回环 API，`MemoryPort` 隔离 Provider SDK。Graphiti 与 Mem0 并列，不形成 `Mem0 → Graphiti` 的硬依赖链；SQLite `MemoryEventStore` 是唯一可审计事实源。动作建议仍由 BrainEngine 生成语义 ID，并由外部 `BehaviorPlanner` 最终批准。
 
 核心数据契约：
 
@@ -638,8 +639,13 @@ desktop-companion/
 │   │   ├── server.py                  // 鉴权 loopback HTTP
 │   │   ├── orchestrator.py            // ConversationOrchestrator
 │   │   ├── llm.py                     // 本地 OpenAI-compatible LLM
-│   │   ├── memory.py                  // Mem0 adapter 与 Memory CRUD
-│   │   ├── session_store.py           // SQLite 会话与 memory outbox
+│   │   ├── memory.py                  // MemoryPort 与 Mem0 adapter
+│   │   ├── memory_manager.py          // 多 Provider 编排与融合召回
+│   │   ├── memory_policy.py           // 候选审批与敏感过滤
+│   │   ├── memory_store.py            // SQLite 事实源与 Provider outbox
+│   │   ├── memory_inference.py        // 本地 LLM 候选提取
+│   │   ├── graphiti_provider.py       // 可选本机时间图
+│   │   ├── session_store.py           // SQLite 会话与 turn outbox
 │   │   ├── security.py                // 本地 URL / 数据目录边界
 │   │   └── openai_client.py           // 无代理、无重定向传输
 │   └── tests/
@@ -672,12 +678,12 @@ ipc           不依赖具体 Engine 实现
 | `src/character/CharacterRuntime.ts` | CharacterEngine facade | 后续只接收 `BehaviorIntent`、视觉设置和 `LipSyncFrame` |
 | `MotionController.ts` + `MotionCatalog.ts` | 动作执行与动作目录 | 保持模型实现细节，不接收 AgentResponse 原始 JSON |
 | `src/speech/SpeechController.ts` | AudioEngine 语音原型 | 逐步由 `AudioController` 统一 TTS、SFX、打断和播放会话 |
-| Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话与 Mem0；不维护第二套 Rust 记忆事实源 |
-| Python `MemoryPort` | 长期记忆边界 | 隔离 Mem0 SDK；Phase II 出现多 Provider 后再引入 Manager / Policy |
+| Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话、MemoryPolicy 与 Provider；不维护第二套 Rust 记忆事实源 |
+| Python `MemoryPort` / `MemoryManager` | 长期记忆边界 | SQLite 为事实源；隔离并编排 Mem0 与可选 Graphiti，支持独立降级和重建 |
 | Rust `vision/` | 可选 Vision 契约 | 默认关闭，等待明确授权的视觉功能 |
 | Rust `speech/provider.rs` | AudioEngine Provider 契约 | 增加 Provider Manager、受控播放和 RMS/Viseme 输出 |
 
-当前 Phase I 已实现：
+当前 Phase I 与 Phase II 记忆主链已实现：
 
 ```text
 BehaviorTypes
@@ -688,10 +694,12 @@ Rust BrainSupervisor / BrainClient
 Python LocalLlmProvider / SQLite Conversation Session
 Mem0 + SQLite history + embedded Qdrant
 Memory Recall / Write / Update / Delete
+MemoryPolicy / 审批 / Provider outbox / 融合召回
+可选 Graphiti + 本机 Neo4j / Provider 状态 / 索引重建
 鉴权、readiness、自动关闭、崩溃检测与退避重启
 ```
 
-后续仍需完成 `BehaviorScheduler`、完整 `BehaviorPolicy`、原生 AudioEngine 播放实现、STT、Conversation UI 增强和 Phase II Graphiti。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
+后续仍需完成 `BehaviorScheduler`、完整 `BehaviorPolicy`、原生 AudioEngine 播放实现、STT、Conversation UI 增强，以及在真实本机 Neo4j 与真实本地模型上的 Graphiti 集成验收。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
 
 ---
 # 10. Tauri Character Window
@@ -2744,13 +2752,13 @@ ConversationOrchestrator → 只能传入本机会话和 MemoryPort 召回的上
 
 上面的 `behavior` 只是 `BehaviorProposal`。BehaviorPlanner 必须再次检查 MotionCatalog、用户启用项、当前物理状态、优先级与冷却时间，批准后才生成 `BehaviorIntent`。
 
-当前 Phase I 由 `Mem0Memory.remember_turn` 在敏感内容检查后调用 Mem0；Mem0 的 LLM 和 Embedding 均显式绑定本机 API。ConversationOrchestrator 只依赖 `MemoryPort`，不直接依赖 Mem0 SDK。
+当前 Phase II 由 `MemoryManager.remember_turn` 调用本地候选提取与 `MemoryPolicy`，再将批准事件写入 SQLite 并异步投递 Mem0/Graphiti。Mem0 的 LLM 和 Embedding 均显式绑定本机 API；ConversationOrchestrator 只依赖 `MemoryPort`，不直接依赖 Provider SDK。
 
 ---
 
 # 56. Memory Interface（记忆系统接口）
 
-记忆系统采用“本地会话事实源 + 窄 MemoryPort + 可替换 Provider”的结构。Phase I 只有 Mem0 一个长期记忆后端，因此不维护无消费者的 Rust MemoryManager、第二套 SQLite 或第二组 Memory commands；BrainEngine 和 ConversationOrchestrator 也不能直接依赖 Mem0 的 SDK、HTTP 数据结构或存储模型。
+记忆系统采用“本地会话事实源 + canonical memory event store + 窄 MemoryPort + 可替换 Provider”的结构。Phase II 的 `MemoryManager` 位于 Python Sidecar，仅编排本地 SQLite、Mem0 与可选 Graphiti；Rust 不维护第二套 MemoryManager 或事实源。BrainEngine 和 ConversationOrchestrator 不能直接依赖 Mem0/Graphiti 的 SDK、HTTP 数据结构或存储模型。
 
 ## 强制本地化边界
 
@@ -2802,7 +2810,7 @@ SQLite                                ▼
                              Semantic + Episodic
 ```
 
-`ConversationOrchestrator` 负责查询顺序、降级和对话提交；`ConversationSessionStore` 负责 Session 与 outbox；`MemoryPort` 负责隔离具体后端。Phase II 引入 Graphiti 时，再增加负责多 Provider 合并和写入政策的 `MemoryManager / MemoryPolicy`。
+`ConversationOrchestrator` 负责查询顺序、降级和对话提交；`ConversationSessionStore` 负责 Session 与对话写入 outbox；`MemoryPort` 负责隔离具体后端。当前 Phase II 已实现 `MemoryManager / MemoryPolicy`、canonical `MemoryEventStore`、Provider outbox，以及 Mem0 与可选 Graphiti 的结果融合和独立降级。
 
 ## 三类记忆
 
@@ -2814,7 +2822,7 @@ SQLite                                ▼
 
 Session Memory 不经过向量检索才能使用，也不依赖 Mem0 在线状态。Semantic 与 Episodic 是项目自己的逻辑分类；即使两者第一阶段都映射到 Mem0，也必须在项目 DTO 中保持区分。
 
-第二阶段增加 Graphiti 时，Temporal Graph 是第四种**检索视图**，不是第四份原始事实源。它适合回答“某个关系何时发生、如何变化、事件先后顺序是什么”，由已经批准的情景事件构建：
+当前第二阶段中，Temporal Graph 是第四种**检索视图**，不是第四份原始事实源。它适合回答“某个关系何时发生、如何变化、事件先后顺序是什么”，由已经批准的情景事件构建：
 
 ```text
 本地 Conversation / Event Log（事实源）
@@ -2911,7 +2919,7 @@ class MemoryPort(Protocol):
     def delete(self, memory_id, scope): ...
 ```
 
-`Mem0Memory` 和关闭长期记忆时使用的 `DisabledMemory` 实现同一窄接口。会话读写与 outbox 由独立的 `ConversationSessionStore` 负责，不再通过另一层 Rust Manager 转发。
+`MemoryManager` 和关闭长期记忆时使用的 `DisabledMemory` 实现同一窄接口。`ConversationSessionStore` 负责对话提交与待提取 turn；`MemoryEventStore` 负责已审核记忆事实与逐 Provider outbox。Rust 不再维护第二份记忆事实源。
 
 Agent 只能接收裁剪后的 `MemoryContext`，不能获得 Provider 客户端。检索结果被视为不可信引用数据，不能作为 system instruction 执行；任何类似“忽略规则”“运行命令”的记忆内容都只能作为被引用的用户资料。
 
@@ -2941,7 +2949,7 @@ Conversation Turn / System Semantic Event
   Mem0Provider       Phase II GraphitiProvider
 ```
 
-上图是 Phase II 多 Provider 写入流程。当前 Phase I 在 `Mem0Memory.remember_turn` 前执行敏感标记过滤，密码、Token、支付信息、未授权屏幕内容等敏感数据默认禁止进入长期记忆。加入 Graphiti 或可编辑写入候选后，再把分类、去重、重要性和用户确认提取成独立 `MemoryPolicy`。
+上图是当前 Phase II 多 Provider 写入流程。`LocalMemoryInferenceProvider` 只调用本机 OpenAI-compatible LLM，输出候选而不能直接写 Provider。`MemoryPolicy` 统一执行长度、敏感信息、分类、重要性、去重与可选人工确认；只有写入 SQLite 的 `ApprovedMemoryEvent` 才能进入 Mem0/Graphiti outbox。
 
 ## 对话调用顺序
 
@@ -2954,11 +2962,12 @@ Conversation Turn / System Semantic Event
 对话结束后：
   1. ConversationSessionStore 原子提交 user / assistant / CharacterResponse
   2. 同一事务创建 memory outbox 状态
-  3. MemoryPort.remember_turn() 使用本机 Mem0 提取并写入
-  4. 成功后完成 outbox；失败则保留待重试状态
+  3. MemoryManager.remember_turn() 使用本地 LLM 生成候选并经过 MemoryPolicy
+  4. 候选写入 SQLite；批准项分别排队同步 Mem0 / Graphiti
+  5. Provider 成功后按 event revision 完成投递；失败则指数退避并保留待重试状态
 ```
 
-Mem0 或 Graphiti 不可用时，对话仍应依靠 Session Memory 工作；长期写入进入本地待处理队列并采用有限重试，不阻塞角色渲染、动作播放或应用退出。
+Mem0 或 Graphiti 不可用时，对话仍依靠 Session Memory 与 SQLite 事实源工作；长期写入进入本地待处理队列并采用有上限的指数退避，不阻塞角色渲染、动作播放或应用退出。Graphiti 的初始化在独立 asyncio 线程中进行，不能占用 Sidecar readiness 的启动窗口。
 
 ## Mem0 接入策略（Phase I）
 
@@ -2987,7 +2996,7 @@ Embedding 向量维度必须显式配置，并同时传给 Mem0 embedder 与 Qdr
 
 Mem0 的内部 memory ID、metadata 字段和过滤语法不能越过 Python `MemoryPort`。Rust 和前端只接收稳定的 `BrainMemory` DTO，确保以后可以替换后端。
 
-Phase I 使用 Mem0 内置提取，但前提是 LLM、Embedding、SQLite history 和 Qdrant 全部显式本机化，并在调用前执行敏感内容过滤。Phase II 引入更多事件来源或 Graphiti 前，必须增加可审计的 `MemoryPolicy`，不能让多个 Provider 各自决定写入规则。
+Phase II 不再让 Mem0 决定哪些内容值得保存。Mem0 只消费已经批准的 canonical event，并继续显式使用本地 LLM、本地 Embedding、SQLite history 和 Qdrant embedded mode；其旧 Phase I 记录通过 `legacy:mem0:` 兼容 ID 继续支持查看、修改和删除。
 
 ## Graphiti 接入策略（Phase II）
 
@@ -3003,7 +3012,9 @@ Graphiti 及其图数据库同样必须部署在本机。Graphiti 用于补充�
 
 Graphiti 的写入来源是 `ApprovedMemoryEvent` 或本地事实源重建任务，不读取 Mem0 私有存储。这样 Mem0 与 Graphiti 任一后端都可以单独升级或移除。
 
-Graphiti 不得连接托管图数据库、远程 embedding 或远程 LLM。Phase II 实现必须复用当前 `LocalEndpoint` 和 Python local-only HTTP client 的网络边界。
+Graphiti 不得连接托管图数据库、远程 embedding 或远程 LLM。当前实现固定 `graphiti-core >=0.30.1,<0.31`，仅支持本机 Neo4j Driver；Windows 下不采用不可用的 FalkorDB Lite，也不采用 Graphiti 已弃用的 Kuzu Driver。URI 仅允许直连 `bolt://` 回环地址，禁止可能通过路由发现返回其他节点的 `neo4j://`；LLM 与 Embedding 显式注入禁用代理和重定向的本地客户端，重排使用无网络本地实现，并设置 `GRAPHITI_TELEMETRY_ENABLED=false`。
+
+Graphiti 默认关闭。密码只读取 Rust 启动环境继承的 `DESKTOP_COMPANION_GRAPHITI_PASSWORD`，不得进入 WebView、Tauri command 参数或 `settings.json`。Graphiti 缺密码、未安装、Neo4j 未启动或索引失败时，Provider 标记为降级；SQLite、Mem0、Session Memory 和正常对话继续工作。
 
 ## 目录与配置
 
@@ -3017,13 +3028,18 @@ src-tauri/src/brain/
 brain-sidecar/src/desktop_companion_brain/
 ├── orchestrator.py
 ├── session_store.py
-├── memory.py
+├── memory.py                  # MemoryPort 与 Mem0 Provider
+├── memory_manager.py          # 多源召回、审批操作与 outbox worker
+├── memory_policy.py           # 候选校验、敏感过滤与重要性策略
+├── memory_store.py            # canonical SQLite event store
+├── memory_inference.py        # 仅本地 LLM 的候选提取
+├── graphiti_provider.py       # 可选本机 Neo4j 时间图
 ├── llm.py
 ├── security.py
 └── server.py
 ```
 
-届时再增加 Tauri command：
+当前 Tauri command：
 
 ```text
 get_brain_status
@@ -3033,9 +3049,13 @@ converse
 list_brain_memories
 update_brain_memory
 delete_brain_memory
+get_memory_status
+approve_brain_memory
+reject_brain_memory
+rebuild_brain_memory
 ```
 
-当前设置页提供长期记忆开关、回答前召回、回答后写入、列表、修改和逐条删除。按作用域清空、导出及原始历史保留策略属于后续显式功能，不通过隐藏 Tauri command 预留。
+当前设置页提供长期记忆开关、回答前召回、回答后写入、最低重要性、人工审批、审计 tombstone 保留期、列表、修改、逐条删除、Provider 状态和按角色作用域重建索引。按作用域清空和导出仍属于后续显式功能，不通过隐藏 Tauri command 预留。
 
 记忆设置中的 Endpoint 只能选择自动发现的本机服务或填写通过 `LocalEndpoint` 校验的 loopback 地址。界面不提供云端 Provider、API Key、OAuth 或远程地址字段。
 
@@ -3328,7 +3348,7 @@ MotionCatalog    → enabledAiMotionIds
 
 API Key、OAuth Token 和云端语音凭据必须通过 Rust command 写入安全存储，不能进入普通 CharacterSettings。
 
-Mem0 / Graphiti / 记忆提取 LLM 的本机 Endpoint、sidecar 会话凭据与健康检查由 Rust 侧管理。设置页只能调用窄 command，不得直接请求记忆服务；任何非 loopback 地址必须在保存前被拒绝。Graphiti 在 Phase II 前应显示为未启用能力，而不是伪装成可用。
+Mem0 / Graphiti / 记忆提取 LLM 的本机 Endpoint、sidecar 会话凭据与健康检查由 Rust 侧管理。设置页只能调用窄 command，不得直接请求记忆服务；任何非 loopback 地址必须在保存前被拒绝。当前 Phase II 的 Graphiti 默认关闭；未配置密码、Neo4j 未启动或初始化失败时必须明确显示降级，不能伪装成可用。
 
 ---
 # 62. Speech Bubble
@@ -3898,7 +3918,7 @@ AudioEngine 不直接修改 PMX Morph
 ```
 
 ---
-# 81. Phase 10：BrainEngine 与 Mem0 记忆
+# 81. Phase 10：BrainEngine 与本地记忆（Phase I 基础链 + Phase II 多 Provider）
 
 当前 Phase I 完成：
 
@@ -3984,7 +4004,7 @@ LLM speech 进入 AudioEngine，而不是直接调用播放设备
 
 `VisionProvider` 保持已定义、默认关闭，留给后续显式授权的视觉功能。第一版 BrainEngine 不具备任意文件、Shell、鼠标或窗口控制能力。
 
-Graphiti 属于记忆系统 Phase II 增强，不作为 Phase 10 的交付门槛：
+Graphiti 属于当前已实现的 Phase II 增强，不作为 Phase 10 基础链的交付门槛；真实本机 Neo4j 服务上的集成验收仍待执行：
 
 ```text
 TemporalGraphProvider
@@ -4159,7 +4179,7 @@ ConversationSessionStore   MemoryPort.remember_turn()
 commit + outbox                  Local Mem0
 ```
 
-ConversationSessionStore 保存原始会话与 outbox；Mem0 保存本机长期记忆。Phase II 加入 Graphiti 时再引入多 Provider 聚合层。记忆检索可以影响本地 Agent 的回答、情绪与动作建议，但动作仍必须走 `BehaviorProposal → BehaviorPlanner → BehaviorIntent`。当前对话链路不允许定义或注册远程 LLM Provider。
+ConversationSessionStore 保存原始会话与对话写入 outbox；当前 Phase II 的 canonical MemoryEventStore 保存批准事件与 Provider outbox，MemoryManager 聚合本机 Mem0 和可选 Graphiti。记忆检索可以影响本地 Agent 的回答、情绪与动作建议，但动作仍必须走 `BehaviorProposal → BehaviorPlanner → BehaviorIntent`。当前对话链路不允许定义或注册远程 LLM Provider。
 
 ## 优先级与抢占
 
@@ -4471,7 +4491,7 @@ Mem0Memory → 未来其他本机长期记忆实现
 
 替换某一个实现时，其他 Engine 不应发生结构性修改。真正稳定的是 Engine port 和数据契约，而不是某个目录名或第三方库。
 
-BrainEngine 内部的 AI、Memory、Vision 分别通过稳定 port 插拔；AudioEngine 的 TTS/STT 同样通过 Provider trait 插拔。Phase I 由 Python `ConversationOrchestrator` 组合 `ConversationSessionStore` 与 `MemoryPort`。只有 Phase II 引入 Graphiti 等多个长期记忆 Provider 后，才由 `MemoryManager` 并列聚合 Mem0Provider 与 GraphitiProvider；Provider 之间不互相依赖。它们共享的是安全存储、错误模型和生命周期规范，不是彼此的内部状态。
+BrainEngine 内部的 AI、Memory、Vision 分别通过稳定 port 插拔；AudioEngine 的 TTS/STT 同样通过 Provider trait 插拔。Phase I 基础链由 Python `ConversationOrchestrator` 组合 `ConversationSessionStore` 与 `MemoryPort`；当前 Phase II 已由 `MemoryManager` 并列聚合 Mem0Provider 与可选 GraphitiProvider。Provider 之间不互相依赖；它们共享的是安全存储、错误模型和生命周期规范，不是彼此的内部状态。
 
 ## 架构不变量
 

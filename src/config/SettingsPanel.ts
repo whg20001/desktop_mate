@@ -149,6 +149,20 @@ export class SettingsPanel {
       this.settings.memoryWriteEnabled;
     requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallLimit"]').value =
       String(this.settings.memoryRecallLimit);
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryApprovalRequired"]').checked =
+      this.settings.memoryApprovalRequired;
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryMinimumImportance"]').value =
+      String(this.settings.memoryMinimumImportance);
+    requiredElement<HTMLInputElement>(this.form, '[name="memoryRetentionDays"]').value =
+      String(this.settings.memoryRetentionDays);
+    requiredElement<HTMLInputElement>(this.form, '[name="graphitiEnabled"]').checked =
+      this.settings.graphitiEnabled;
+    requiredElement<HTMLInputElement>(this.form, '[name="graphitiUri"]').value =
+      this.settings.graphitiUri;
+    requiredElement<HTMLInputElement>(this.form, '[name="graphitiDatabase"]').value =
+      this.settings.graphitiDatabase;
+    requiredElement<HTMLInputElement>(this.form, '[name="graphitiUser"]').value =
+      this.settings.graphitiUser;
 
     this.scaleOutput.value = this.settings.scale.toFixed(2);
     this.updateCharacterModelSummary();
@@ -192,9 +206,43 @@ export class SettingsPanel {
       embeddingModel: String(data.get('embeddingModel') ?? ''),
       embeddingDimensions: Number(data.get('embeddingDimensions')),
       memoryEnabled: data.get('memoryEnabled') === 'on',
-      memoryRecallEnabled: data.get('memoryRecallEnabled') === 'on',
-      memoryWriteEnabled: data.get('memoryWriteEnabled') === 'on',
-      memoryRecallLimit: Number(data.get('memoryRecallLimit')),
+      memoryRecallEnabled: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="memoryRecallEnabled"]',
+      ).checked,
+      memoryWriteEnabled: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="memoryWriteEnabled"]',
+      ).checked,
+      memoryRecallLimit: Number(
+        requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallLimit"]').value,
+      ),
+      memoryApprovalRequired: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="memoryApprovalRequired"]',
+      ).checked,
+      memoryMinimumImportance: Number(
+        requiredElement<HTMLInputElement>(this.form, '[name="memoryMinimumImportance"]').value,
+      ),
+      memoryRetentionDays: Number(
+        requiredElement<HTMLInputElement>(this.form, '[name="memoryRetentionDays"]').value,
+      ),
+      graphitiEnabled: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="graphitiEnabled"]',
+      ).checked,
+      graphitiUri: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="graphitiUri"]',
+      ).value,
+      graphitiDatabase: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="graphitiDatabase"]',
+      ).value,
+      graphitiUser: requiredElement<HTMLInputElement>(
+        this.form,
+        '[name="graphitiUser"]',
+      ).value,
     });
   }
 
@@ -437,6 +485,15 @@ export class SettingsPanel {
       .querySelectorAll<HTMLInputElement>('[data-memory-control]')
       .forEach((control) => {
         control.disabled = !enabled;
+      });
+    const graphitiEnabled = enabled && requiredElement<HTMLInputElement>(
+      this.form,
+      '[name="graphitiEnabled"]',
+    ).checked;
+    this.form
+      .querySelectorAll<HTMLInputElement>('[data-graphiti-control]')
+      .forEach((control) => {
+        control.disabled = !graphitiEnabled;
       });
   }
 

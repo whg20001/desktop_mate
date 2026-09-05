@@ -1,5 +1,5 @@
 use std::{
-    net::{SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     time::Duration,
 };
 
@@ -76,6 +76,16 @@ fn resolve_loopback_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> {
         Some(Host::Ipv6(address)) if address.is_loopback() => {
             Ok(vec![SocketAddr::new(address.into(), port)])
         }
+        Some(Host::Domain(host))
+            if host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback()) =>
+        {
+            Ok(vec![SocketAddr::new(
+                host.parse().expect("checked IP"),
+                port,
+            )])
+        }
         Some(Host::Domain(host)) if host.eq_ignore_ascii_case("localhost") => {
             resolve_localhost(port)
         }
@@ -93,6 +103,25 @@ fn resolve_localhost(port: u16) -> Result<Vec<SocketAddr>, String> {
         return Err("localhost did not resolve exclusively to loopback addresses".into());
     }
     Ok(addresses)
+}
+
+pub fn validate_local_graph_endpoint(value: &str) -> Result<(), String> {
+    let url = Url::parse(value).map_err(|error| format!("invalid graph URL: {error}"))?;
+    if url.scheme() != "bolt" {
+        return Err("graph endpoints must use direct bolt over loopback".into());
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("credentials, queries and fragments are not allowed in graph URLs".into());
+    }
+    if !matches!(url.path(), "" | "/") {
+        return Err("graph URL paths are not allowed; configure the database separately".into());
+    }
+    resolve_loopback_addresses(&url)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -122,5 +151,15 @@ mod tests {
         assert!(endpoint
             .http_client_with_timeout(Duration::from_secs(8))
             .is_ok());
+    }
+
+    #[test]
+    fn graph_endpoints_require_loopback_bolt_without_credentials() {
+        assert!(validate_local_graph_endpoint("bolt://127.0.0.1:7687").is_ok());
+        assert!(validate_local_graph_endpoint("neo4j://localhost:7687").is_err());
+        assert!(validate_local_graph_endpoint("http://127.0.0.1:7687").is_err());
+        assert!(validate_local_graph_endpoint("bolt://192.168.1.2:7687").is_err());
+        assert!(validate_local_graph_endpoint("bolt://127.0.0.1:7687/other").is_err());
+        assert!(validate_local_graph_endpoint("bolt://user:password@127.0.0.1:7687").is_err());
     }
 }

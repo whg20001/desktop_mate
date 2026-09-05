@@ -5,7 +5,9 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use super::{
     locality::LocalEndpoint,
-    model::{BrainMemory, CharacterResponse, ConversationPayload, ConversationScope},
+    model::{
+        BrainMemory, CharacterResponse, ConversationPayload, ConversationScope, MemoryManagerStatus,
+    },
 };
 
 pub struct BrainClient {
@@ -99,6 +101,62 @@ impl BrainClient {
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn memory_status(&self) -> Result<MemoryManagerStatus, String> {
+        self.request(
+            Method::POST,
+            "v1/memories/status",
+            Some(&serde_json::json!({})),
+        )
+        .await
+    }
+
+    pub async fn decide_memory(
+        &self,
+        scope: &ConversationScope,
+        memory_id: &str,
+        approve: bool,
+    ) -> Result<(), String> {
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Request<'a> {
+            scope: &'a ConversationScope,
+            memory_id: &'a str,
+        }
+        let action = if approve { "approve" } else { "reject" };
+        let _: serde_json::Value = self
+            .request(
+                Method::POST,
+                &format!("v1/memories/{action}"),
+                Some(&Request { scope, memory_id }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn rebuild_memory(
+        &self,
+        scope: &ConversationScope,
+        provider: &str,
+    ) -> Result<usize, String> {
+        #[derive(serde::Serialize)]
+        struct Request<'a> {
+            scope: &'a ConversationScope,
+            provider: &'a str,
+        }
+        #[derive(serde::Deserialize)]
+        struct Response {
+            count: usize,
+        }
+        Ok(self
+            .request::<_, Response>(
+                Method::POST,
+                "v1/memories/rebuild",
+                Some(&Request { scope, provider }),
+            )
+            .await?
+            .count)
     }
 
     async fn request<B: Serialize + ?Sized, T: DeserializeOwned>(

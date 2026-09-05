@@ -138,6 +138,33 @@ class ConversationSessionStore:
             )
             self._connection.commit()
 
+    def pending_memory_writes(self, limit: int = 32) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT turn_id, user_id, character_id, session_id,
+                          user_content, assistant_content
+                   FROM conversation_turns
+                   WHERE memory_write_completed = 0
+                   ORDER BY created_at_unix_ms
+                   LIMIT ?1""",
+                (max(1, min(limit, 100)),),
+            ).fetchall()
+        return [
+            {
+                "turnId": row[0],
+                "scope": {
+                    "userId": row[1],
+                    "characterId": row[2],
+                    "sessionId": row[3],
+                },
+                "messages": [
+                    {"role": "user", "content": row[4]},
+                    {"role": "assistant", "content": row[5]},
+                ],
+            }
+            for row in rows
+        ]
+
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {
             row[1]
