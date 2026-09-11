@@ -1,3 +1,5 @@
+import type { AiMotionId, MotionId } from '../character/animation/MotionCatalog';
+
 export type EmotionKind =
   | 'neutral'
   | 'happy'
@@ -12,11 +14,30 @@ export interface EmotionIntent {
   durationMs: number;
 }
 
-export type ApprovedActionId = 'idle' | 'greeting' | 'talking';
+export type ApprovedActionId = AiMotionId;
+export type BehaviorSource = 'system' | 'interaction' | 'audio' | 'ai';
 
-export interface BehaviorIntent {
+export interface BehaviorProposal {
+  source: BehaviorSource;
+  actionId?: string;
   emotion?: EmotionIntent;
-  actionId?: ApprovedActionId;
-  actionIntensity?: number;
+  intensity?: number;
+  durationMs?: number;
+  issuedAt?: number;
 }
 
+export interface BehaviorIntent {
+  source: BehaviorSource;
+  priority: number;
+  issuedAt: number;
+  emotion?: EmotionIntent;
+  actionId?: MotionId;
+  actionIntensity?: number;
+  durationMs?: number;
+}
+
+export type MotionBehaviorIntent = BehaviorIntent & {
+  actionId: MotionId;
+  actionIntensity: number;
+  durationMs: number;
+};

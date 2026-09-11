@@ -134,6 +134,10 @@ class BrainRequestHandler(BaseHTTPRequestHandler):
                 )
             elif self.path == "/v1/memories/status":
                 self._json(HTTPStatus.OK, self.server.application.memory.status())
+            elif self.path == "/v1/memories/retry":
+                scope = validate_scope(body.get('scope'))
+                self.server.application.memory.retry(scope)
+                self._json(HTTPStatus.OK, {'status': 'queued'})
             elif self.path == "/v1/memories/approve":
                 scope = validate_scope(body.get("scope"))
                 memory_id = _memory_id(body.get("memoryId"))

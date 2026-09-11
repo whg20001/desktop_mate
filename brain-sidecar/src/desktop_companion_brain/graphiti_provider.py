@@ -11,6 +11,7 @@ from typing import Any, Coroutine
 from .config import SidecarConfig
 from .memory_policy import ApprovedMemoryEvent
 from .openai_client import create_local_async_openai_client
+from .retrieval import lexical_score
 
 
 class GraphitiMemory:
@@ -61,6 +62,7 @@ class GraphitiMemory:
                         "id": identifier,
                         "content": fact.strip(),
                         "score": max(0.0, 1.0 - index * 0.05),
+                        "canonicalEventIds": list(getattr(edge, 'episodes', [])),
                         "createdAt": None,
                         "updatedAt": None,
                     }
@@ -150,9 +152,8 @@ class GraphitiMemory:
                 query: str,
                 passages: list[str],
             ) -> list[tuple[str, float]]:
-                terms = set(query.casefold().split())
                 scored = [
-                    (passage, len(terms.intersection(passage.casefold().split())))
+                    (passage, lexical_score(query, passage))
                     for passage in passages
                 ]
                 return sorted(scored, key=lambda value: value[1], reverse=True)

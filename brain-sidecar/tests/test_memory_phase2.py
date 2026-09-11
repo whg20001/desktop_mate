@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -94,8 +95,12 @@ class FakeInference:
         messages: list[dict[str, str]],
         scope: dict[str, str],
         turn_id: str,
+        *, existing_memories=None,
     ) -> list[MemoryCandidate]:
-        return list(self.candidates)
+        evidence = next((message['content'] for message in messages if message['role'] == 'user'), '')
+        return [replace(candidate, metadata={**candidate.metadata, 'evidence': evidence,
+                                            'sourceRole': 'user', 'confidence': 0.9})
+                for candidate in self.candidates]
 
 
 class FakeProvider:
@@ -416,7 +421,7 @@ class MemoryManagerTests(unittest.TestCase):
             finally:
                 manager.close()
 
-    def test_provider_results_are_merged_by_content_hash(self) -> None:
+    def test_provider_rankings_are_merged_by_canonical_id(self) -> None:
         content = "Prefers local-first software"
         mem0 = FakeProvider(
             "mem0",
@@ -435,9 +440,12 @@ class MemoryManagerTests(unittest.TestCase):
             try:
                 event = make_event(content, importance=0.7)
                 manager.store.add(event, ())
+                for provider in (mem0, graphiti):
+                    provider.search_records[0]['content'] = content
+                    provider.search_records[0]['metadata'] = {'canonicalEventId': event.event_id, 'revision': 1}
                 results = manager.search("local-first", event.scope, 5)
                 self.assertEqual(len(results), 1)
-                self.assertEqual(results[0]["score"], 0.92)
+                self.assertAlmostEqual(results[0]["score"], 3 / 61)
                 self.assertEqual(
                     results[0]["sources"],
                     ["sqlite", "mem0", "graphiti"],
@@ -557,7 +565,7 @@ class MemoryManagerTests(unittest.TestCase):
                     record["content"]
                     for record in manager.search("fact", event.scope, 5)
                 }
-                self.assertEqual(contents, {"Canonical fact", "Provider-only fact"})
+                self.assertEqual(contents, {"Canonical fact"})
             finally:
                 manager.close()
 
@@ -565,7 +573,7 @@ class MemoryManagerTests(unittest.TestCase):
         mem0 = FakeProvider("mem0")
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "desktop_companion_brain.memory_manager.Mem0Memory",
+                "desktop_companion_brain.memory.Mem0Memory",
                 return_value=mem0,
             ):
                 manager = MemoryManager(

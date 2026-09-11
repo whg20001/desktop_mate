@@ -77,11 +77,22 @@ export const brainMemorySchema = z.object({
   updatedAt: z.string().nullable().optional(),
 });
 
+const memoryQueueSchema = z.preprocess((value) => value ?? {}, z.object({
+  pending: z.number().default(0),
+  oldestWaitMs: z.number().default(0),
+  failedAttempts: z.number().default(0),
+  lastError: z.string().nullable().default(null),
+}));
+
 export const memoryManagerStatusSchema = z.object({
   enabled: z.boolean(),
   ready: z.boolean(),
   approvalRequired: z.boolean().default(false),
   inferenceReady: z.boolean().default(false),
+  workerAlive: z.boolean().default(false),
+  workerError: z.string().nullable().default(null),
+  extractionQueue: memoryQueueSchema,
+  indexQueue: memoryQueueSchema,
   providers: z.array(
     z.object({
       id: z.string(),

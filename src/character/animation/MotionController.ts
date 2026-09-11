@@ -89,6 +89,10 @@ export class MotionController {
     this.previousState = { mode: state.mode, x: state.x, y: state.y };
   }
 
+  isLandingActive(): boolean {
+    return this.landingElapsed < LANDING_SECONDS;
+  }
+
   greet(): void {
     this.greetingElapsed = 0;
   }

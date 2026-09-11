@@ -77,10 +77,11 @@ class OrchestratorTests(unittest.TestCase):
             second = orchestrator.converse(request)
             self.assertEqual(first, second)
             self.assertEqual(llm.calls, 1)
-            self.assertEqual(memory.operations, ["recall", "write"])
+            self.assertEqual(memory.operations, ["recall"])
             self.assertEqual(first["emotion"]["intensity"], 1.0)
             self.assertEqual(first["actionIntent"]["id"], "greeting")
-            self.assertFalse(sessions.memory_write_pending("turn-1"))
+            self.assertTrue(sessions.memory_write_pending("turn-1"))
+            self.assertEqual(len(sessions.pending_memory_writes()), 1)
             sessions.close()
 
     def test_unknown_action_is_not_forwarded(self) -> None:
@@ -120,6 +121,7 @@ class OrchestratorTests(unittest.TestCase):
             )
             self.assertNotIn("actionIntent", response)
             self.assertEqual(memory.operations, [])
+            self.assertFalse(sessions.memory_write_pending("turn-2"))
             sessions.close()
 
 

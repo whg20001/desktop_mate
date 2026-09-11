@@ -110,6 +110,15 @@ pub async fn get_memory_status(
 }
 
 #[tauri::command]
+pub async fn retry_brain_memory(
+    scope: ConversationScope,
+    state: State<'_, Arc<BrainSupervisor>>,
+) -> CommandResult<()> {
+    scope.validate()?;
+    state.ready_client()?.retry_memory(&scope).await
+}
+
+#[tauri::command]
 pub async fn approve_brain_memory(
     scope: ConversationScope,
     memory_id: String,
@@ -144,7 +153,12 @@ pub async fn rebuild_brain_memory(
     state: State<'_, Arc<BrainSupervisor>>,
 ) -> CommandResult<usize> {
     scope.validate()?;
-    if !matches!(provider.as_str(), "mem0" | "graphiti") {
+    if provider.is_empty()
+        || provider.len() > 64
+        || !provider
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err("memory provider is invalid".into());
     }
     state

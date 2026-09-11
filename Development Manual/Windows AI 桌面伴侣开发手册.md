@@ -676,6 +676,7 @@ ipc           不依赖具体 Engine 实现
 | `src/app/bootstrap.ts` | 当前 Composition Root | 保留启动职责，跨 Engine 工作流逐步移入 `CompanionOrchestrator` |
 | `src/desktop/DesktopBridge.ts` + Rust `desktop/`、`runtime.rs` | DesktopEngine | 保持 IPC 窄接口，不让前端重算桌面物理 |
 | `src/character/CharacterRuntime.ts` | CharacterEngine facade | 后续只接收 `BehaviorIntent`、视觉设置和 `LipSyncFrame` |
+| `BehaviorPlanner.ts` + `BehaviorPolicy.ts` + `BehaviorScheduler.ts` | 行为准入与调度边界 | Planner 归一化外部建议，Policy 校验来源与 allow-list，Scheduler 负责物理抢占、排队、冷却和恢复 |
 | `MotionController.ts` + `MotionCatalog.ts` | 动作执行与动作目录 | 保持模型实现细节，不接收 AgentResponse 原始 JSON |
 | `src/speech/SpeechController.ts` | AudioEngine 语音原型 | 逐步由 `AudioController` 统一 TTS、SFX、打断和播放会话 |
 | Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话、MemoryPolicy 与 Provider；不维护第二套 Rust 记忆事实源 |
@@ -688,6 +689,7 @@ ipc           不依赖具体 Engine 实现
 ```text
 BehaviorTypes
 BehaviorPlanner
+BehaviorPolicy / BehaviorScheduler
 BrainBridge / ConversationOrchestrator
 Speech Bubble / 情绪 / Web Speech TTS 联动
 Rust BrainSupervisor / BrainClient
@@ -699,7 +701,7 @@ MemoryPolicy / 审批 / Provider outbox / 融合召回
 鉴权、readiness、自动关闭、崩溃检测与退避重启
 ```
 
-后续仍需完成 `BehaviorScheduler`、完整 `BehaviorPolicy`、原生 AudioEngine 播放实现、STT、Conversation UI 增强，以及在真实本机 Neo4j 与真实本地模型上的 Graphiti 集成验收。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
+后续仍需完成原生 AudioEngine 播放实现、STT、Conversation UI 增强，以及由用户配置的真实本机 Neo4j 与真实本地模型上的 Graphiti 集成验收。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
 
 ---
 # 10. Tauri Character Window
@@ -2357,11 +2359,16 @@ DesktopEvent / UserInteraction / AgentResponse / AudioEvent
                          │
                          ▼
                   BehaviorPlanner
-          校验 → 仲裁 → 调度 → 生成 BehaviorIntent
+              外部响应 → BehaviorProposal
+                         │
+                         ▼
+                   BehaviorPolicy
+         来源 / Catalog / allow-list / 强度校验
+              → 生成 BehaviorIntent
                          │
                          ▼
                   BehaviorScheduler
-              抢占 / 排队 / 冷却 / 恢复
+       物理状态仲裁 / 抢占 / 排队 / 冷却 / 恢复
                          │
                          ▼
                   AnimationSelector
@@ -2990,7 +2997,7 @@ Mem0 sidecar 必须绑定 loopback、使用随机会话凭据、由 Tauri 生命
 
 Phase I 不需要 Docker。当前实现使用 SQLite 加 Qdrant embedded local mode；Rust Host 每次启动生成 64 位十六进制临时令牌和随机回环端口，Python Sidecar 只监听 `127.0.0.1`。Rust 与 Python 两侧都拒绝非 loopback LLM/Embedding URL，并禁用系统代理、HTTP 重定向、Mem0 遥测以及任何默认云端 Provider。所有会话、向量、历史、outbox 与日志只能写入 Tauri app local data 下的 `brain/` 目录。
 
-Embedding 向量维度必须显式配置，并同时传给 Mem0 embedder 与 Qdrant collection；默认 `nomic-embed-text` 配置为 768 维。更换模型前必须确认实际输出维度，并重建与新维度不兼容的本地向量集合，禁止静默沿用错误维度。
+Embedding 向量维度必须显式配置，并同时传给 Mem0 embedder 与 Qdrant collection。项目不预设任何本地模型或模型服务；接入前必须确认实际输出维度，并重建与新维度不兼容的本地向量集合，禁止静默沿用错误维度。
 
 日志默认只记录时间、级别、请求方法、路由和错误类型，不记录认证令牌、完整对话、Prompt、记忆正文或请求正文。
 
@@ -3075,7 +3082,7 @@ rebuild_brain_memory
   不接任何真实模型，也不做任何截屏
 
 以后：
-  接入任意一个多模态模型（GPT-4o / Claude / Qwen-VL / 本地 LLaVA via Ollama）
+  接入任意一个多模态模型（云端 Provider 或用户自选的本机多模态服务）
   只需要新增一个 VisionProvider 实现，Character / Behavior 层不需要改动
 ```
 
@@ -3176,7 +3183,7 @@ Memory 是强制例外：记忆存储、检索、embedding、重排、提取 LLM
     loopback base_url
     model
   适用：
-    本机 Ollama / LM Studio / vLLM 等 OpenAI-compatible 服务
+    任意由用户选择的本机 OpenAI-compatible 服务
   限制：
     不接收远程 API Key
     不允许 HTTPS、公网或局域网地址

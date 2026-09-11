@@ -101,7 +101,7 @@ export async function bootstrap(): Promise<() => void> {
       if (!settings.speechEnabled) voice.cancel();
       saveCharacterSettings(settings);
       character.applySettings(settings);
-      character.talk(1.2);
+      character.applyBehavior(behavior.audio(1_200));
       const restartNote = modelChanged ? ' 模型将在下次启动时切换。' : '';
       speech.show(`${settings.displayName}：配置已保存。${restartNote}`);
     },
@@ -111,12 +111,12 @@ export async function bootstrap(): Promise<() => void> {
     bridge,
     () => {
       const message = '嗯？我在这里。';
-      character.reactToClick();
+      character.applyBehavior(behavior.interaction('greeting'));
       speech.show(settings.displayName + '：' + message);
       conversation.focus();
       if (settings.speechEnabled) {
         void speakWithSettings(message, 'interaction').catch((error: unknown) => {
-          character.talk(1.6);
+          character.applyBehavior(behavior.audio(1_600));
           console.warn('[speech]', error);
         });
       }
@@ -149,9 +149,11 @@ export async function bootstrap(): Promise<() => void> {
             console.warn('[speech]', error instanceof Error ? error.message : '播放失败');
           });
         }
+        return true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Brain 当前不可用';
         speech.show(settings.displayName + '：' + message, 5_000);
+        return false;
       }
     },
   );

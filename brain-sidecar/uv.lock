@@ -119,7 +119,7 @@ dependencies = [
 requires-dist = [
     { name = "graphiti-core", specifier = ">=0.30.1,<0.31" },
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "mem0ai", specifier = ">=1.0,<2" },
+    { name = "mem0ai", specifier = "==1.0.11" },
     { name = "openai", specifier = ">=1.90,<4" },
     { name = "qdrant-client", specifier = ">=1.12,<2" },
 ]

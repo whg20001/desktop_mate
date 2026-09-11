@@ -314,6 +314,14 @@ pub struct MemoryManagerStatus {
     #[serde(default)]
     pub inference_ready: bool,
     #[serde(default)]
+    pub worker_alive: bool,
+    #[serde(default)]
+    pub worker_error: Option<String>,
+    #[serde(default)]
+    pub extraction_queue: serde_json::Value,
+    #[serde(default)]
+    pub index_queue: serde_json::Value,
+    #[serde(default)]
     pub providers: Vec<MemoryProviderStatus>,
     #[serde(default)]
     pub events: serde_json::Value,

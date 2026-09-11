@@ -20,6 +20,8 @@ function isTauri(): boolean {
 }
 
 export class BrainBridge {
+  private pendingTurn?: { key: string; turnId: string };
+
   async status(): Promise<BrainStatus> {
     if (!isTauri()) {
       return {
@@ -46,19 +48,26 @@ export class BrainBridge {
     scope: ConversationScope,
     enabledMotionIds: readonly string[],
   ): Promise<CharacterResponse> {
+    const key = JSON.stringify([scope.userId, scope.characterId, scope.sessionId, userInput]);
+    if (this.pendingTurn?.key !== key) {
+      this.pendingTurn = { key, turnId: crypto.randomUUID() };
+    }
+    const turn = this.pendingTurn;
     const availableActions = MOTION_CATALOG.filter(
       (motion) => motion.owner === 'ai' && enabledMotionIds.includes(motion.id),
     ).map(({ id, description, scenes }) => ({ id, description, scenes: [...scenes] }));
     const response = await invoke('converse', {
       request: {
-        turnId: crypto.randomUUID(),
+        turnId: turn.turnId,
         scope,
         userInput,
         availableActions,
         desktopContext: null,
       },
     });
-    return characterResponseSchema.parse(response);
+    const parsed = characterResponseSchema.parse(response);
+    if (this.pendingTurn === turn) this.pendingTurn = undefined;
+    return parsed;
   }
 
   async listMemories(scope: ConversationScope): Promise<BrainMemory[]> {
@@ -80,6 +89,10 @@ export class BrainBridge {
 
   async memoryStatus(): Promise<MemoryManagerStatus> {
     return memoryManagerStatusSchema.parse(await invoke('get_memory_status'));
+  }
+
+  async retryMemory(scope: ConversationScope): Promise<void> {
+    await invoke('retry_brain_memory', { scope });
   }
 
   async approveMemory(scope: ConversationScope, memoryId: string): Promise<void> {

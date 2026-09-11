@@ -31,7 +31,7 @@ pnpm check
 pnpm tauri dev
 ```
 
-调试前请先在本机启动 OpenAI-compatible LLM 与 Embedding API；默认端点均为 `http://127.0.0.1:11434/v1`，默认模型为 `qwen2.5:7b` 和 `nomic-embed-text`，后者的默认向量维度为 768。更换 Embedding 模型时必须在设置页同步填写实际向量维度。未启动模型服务时，角色窗口仍会正常运行，设置页将 Brain 标记为 `Degraded`。
+LLM 与 Embedding 当前只保留 Provider-neutral 的本机 OpenAI-compatible 接口，不预设或自动安装任何模型服务。需要对话时，在设置页填写回环 Base URL、模型名称和实际 Embedding 维度；未配置或未启动本机服务时，角色窗口仍会正常运行，设置页将 Brain 标记为 `Degraded`。
 
 `pnpm tauri dev` 会自动启动 Python Sidecar，应用退出时自动关闭；不要单独长期运行 Sidecar。会话、Mem0 历史、Qdrant 向量与脱敏日志位于 `%LOCALAPPDATA%\com.desktopmate.companion\brain`。启动后可在角色下方输入对话；双击角色进入设置页，可查看 Brain 状态并管理本地记忆。语音模块的分层与后续 AI/STT 接线方式见 [语音模块架构](docs/voice-architecture.md)。
 

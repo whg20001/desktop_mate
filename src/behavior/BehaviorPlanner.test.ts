@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CHARACTER_SETTINGS } from '../config/CharacterSettings';
 import { BehaviorPlanner } from './BehaviorPlanner';
+import { BehaviorPolicy } from './BehaviorPolicy';
 
 describe('BehaviorPlanner', () => {
   it('maps an allowed semantic proposal without exposing model controls', () => {
-    const intent = new BehaviorPlanner().resolve(
+    const intent = new BehaviorPlanner(new BehaviorPolicy(() => 100)).resolve(
       {
         turnId: 'turn',
         text: '你好',
@@ -16,9 +17,13 @@ describe('BehaviorPlanner', () => {
       DEFAULT_CHARACTER_SETTINGS,
     );
     expect(intent).toEqual({
+      source: 'ai',
+      priority: 40,
+      issuedAt: 100,
       emotion: { kind: 'happy', intensity: 0.7, durationMs: 1000 },
       actionId: 'greeting',
       actionIntensity: 0.6,
+      durationMs: 1600,
     });
   });
 

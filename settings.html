@@ -340,14 +340,14 @@
                   <div class="settings-field-grid">
                     <label>
                       <span>OpenAI 兼容 Base URL</span>
-                      <input name="llmBaseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" autocomplete="off" required />
+                      <input name="llmBaseUrl" type="url" placeholder="http://127.0.0.1:PORT/v1" autocomplete="off" />
                     </label>
                     <label>
                       <span>模型名称</span>
-                      <input name="llmModel" placeholder="qwen2.5:7b" maxlength="128" autocomplete="off" required />
+                      <input name="llmModel" placeholder="local-chat-model" maxlength="128" autocomplete="off" />
                     </label>
                   </div>
-                  <p class="settings-note">仅接受 HTTP 回环地址：127.0.0.0/8、localhost 或 ::1，不允许云端和局域网地址。</p>
+                  <p class="settings-note">未配置时可以留空；配置后仅接受 HTTP 回环地址，不绑定任何特定本地模型服务。</p>
                 </fieldset>
 
                 <fieldset class="settings-section">
@@ -355,18 +355,18 @@
                   <div class="settings-field-grid">
                     <label>
                       <span>OpenAI 兼容 Base URL</span>
-                      <input name="embeddingBaseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" autocomplete="off" required />
+                      <input name="embeddingBaseUrl" type="url" placeholder="http://127.0.0.1:PORT/v1" autocomplete="off" />
                     </label>
                     <label>
                       <span>Embedding 模型</span>
-                      <input name="embeddingModel" placeholder="nomic-embed-text" maxlength="128" autocomplete="off" required />
+                      <input name="embeddingModel" placeholder="local-embedding-model" maxlength="128" autocomplete="off" />
                     </label>
                     <label>
                       <span>向量维度</span>
                       <input name="embeddingDimensions" type="number" min="64" max="8192" step="1" required />
                     </label>
                   </div>
-                  <p class="settings-note">维度必须与模型输出一致；nomic-embed-text 默认填写 768。</p>
+                  <p class="settings-note">未配置时可以留空；接入后向量维度必须与所选本地模型的实际输出一致。</p>
                 </fieldset>
 
                 <fieldset class="settings-section">

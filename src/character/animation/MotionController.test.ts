@@ -99,7 +99,11 @@ describe('MotionController', () => {
 
     advance(controller, 0.2);
 
+    expect(controller.isLandingActive()).toBe(true);
     expect(runtime.bones.get('center')!.position.y).toBeLessThan(-0.05);
+
+    advance(controller, 0.4);
+    expect(controller.isLandingActive()).toBe(false);
   });
 
   it('cancels the landing offset when a new fall starts', () => {

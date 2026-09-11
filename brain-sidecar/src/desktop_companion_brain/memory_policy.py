@@ -40,6 +40,7 @@ class ApprovedMemoryEvent:
     metadata: dict[str, Any]
     status: MemoryStatus = "approved"
     revision: int = 1
+    updated_at_unix_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,10 @@ class MemoryPolicy:
         candidate: MemoryCandidate,
         scope: dict[str, str],
         source_event_ids: tuple[str, ...],
+        *, messages: list[dict[str, str]] | None = None,
     ) -> PolicyDecision:
+        if messages is not None and not valid_user_evidence(candidate.metadata, messages):
+            return PolicyDecision('rejected', 'unsupported_user_fact', None)
         content = _normalize_content(candidate.content)
         if not content:
             return PolicyDecision("rejected", "empty", None)
@@ -111,6 +115,17 @@ def memory_content_hash(content: str) -> str:
     return hashlib.sha256(normalized).hexdigest()
 
 
+def valid_user_evidence(metadata: dict[str, Any], messages: list[dict[str, str]]) -> bool:
+    evidence, confidence = metadata.get('evidence'), metadata.get('confidence')
+    return bool(
+        metadata.get('sourceRole') == 'user'
+        and isinstance(evidence, str) and evidence.strip() and len(evidence) <= 1000
+        and any(evidence in message.get('content', '') for message in messages if message.get('role') == 'user')
+        and not isinstance(confidence, bool) and isinstance(confidence, (int, float))
+        and math.isfinite(confidence) and 0.7 <= confidence <= 1.0
+    )
+
+
 def _normalize_content(content: str) -> str:
     return re.sub(r"\s+", " ", str(content)).strip()
 
@@ -128,12 +143,19 @@ def _normalize_tags(tags: tuple[str, ...]) -> tuple[str, ...]:
 
 def _safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     allowed: dict[str, Any] = {}
-    for key in ("source", "scene", "subject"):
+    for key in ("source", "scene", "subject", "evidence", "sourceRole"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
-            cleaned = _normalize_content(value)[:128]
+            cleaned = _normalize_content(value)[:1000 if key == "evidence" else 128]
             if not contains_sensitive(cleaned):
                 allowed[key] = cleaned
+    confidence = metadata.get("confidence")
+    if isinstance(confidence, (int, float)) and math.isfinite(confidence):
+        allowed["confidence"] = max(0.0, min(1.0, confidence))
+    supersedes = metadata.get("supersedes")
+    if isinstance(supersedes, list):
+        allowed["supersedes"] = [value for value in supersedes[:8]
+                                 if isinstance(value, str) and len(value) <= 128]
     return allowed
 
 

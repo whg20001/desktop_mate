@@ -7,6 +7,7 @@ import logging
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 from desktop_companion_brain.config import SidecarConfig
@@ -72,6 +73,16 @@ class ServerTests(unittest.TestCase):
                 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
                 connection.request("GET", "/ready")
                 self.assertEqual(connection.getresponse().status, 401)
+                connection.close()
+                application.memory.retry = Mock()
+                connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+                scope = {'userId': 'u', 'characterId': 'c', 'sessionId': 's'}
+                connection.request('POST', '/v1/memories/retry', body=json.dumps({'scope': scope}),
+                                   headers={'x-desktop-companion-token': config.token})
+                retried = connection.getresponse()
+                self.assertEqual(retried.status, 200)
+                retried.read()
+                application.memory.retry.assert_called_once_with(scope)
                 connection.close()
 
                 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -147,6 +158,7 @@ class ServerTests(unittest.TestCase):
                     ("POST", "/shutdown", b"{}"),
                     ("PATCH", "/v1/memories/id", b"{}"),
                     ("DELETE", "/v1/memories/id", b"{}"),
+                    ('POST', '/v1/memories/retry', b'{}'),
                 ):
                     for token in (None, "wrong-token"):
                         with self.subTest(method=method, path=path, token=token):

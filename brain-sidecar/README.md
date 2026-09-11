@@ -21,3 +21,22 @@ uv sync --project brain-sidecar
 
 Normally the process must not be started manually. `pnpm tauri dev` launches it.
 
+Conversation replies are returned after the reply and pending memory-write marker
+are committed together to SQLite. Memory extraction runs only in the existing
+MemoryManager worker; it no longer delays a fresh reply or a cached retry. The
+worker polls for pending turns while idle, defers failed extraction for 30 seconds,
+and resumes persisted tasks after restart without requiring another user message.
+Long-term memories may therefore appear after the reply; recent conversation
+history is available immediately. Disabling memory writes pauses extraction of
+pending turns until writes are enabled again.
+
+The conversation input is cleared only after a successful send. A failed send
+preserves the draft, and retrying the same text in the same conversation reuses its
+turn ID until a valid response arrives, so the server can return a cached reply.
+
+Memory ownership, provider replacement contracts, correction/approval behavior,
+legacy migration, and deletion limits are documented in
+[memory architecture](../docs/memory-architecture.md). Mem0 is pinned to the
+locally verified 1.0.11 release. Untracked legacy index records require approval
+before they can be recalled; existing canonical facts are preserved.
+

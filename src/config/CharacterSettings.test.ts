@@ -19,10 +19,10 @@ describe('character settings', () => {
       speechVolume: 1,
       aiMotionEnabled: true,
       enabledAiMotionIds: ['idle', 'greeting', 'talking'],
-      llmBaseUrl: 'http://127.0.0.1:11434/v1',
-      llmModel: 'qwen2.5:7b',
-      embeddingBaseUrl: 'http://127.0.0.1:11434/v1',
-      embeddingModel: 'nomic-embed-text',
+      llmBaseUrl: '',
+      llmModel: '',
+      embeddingBaseUrl: '',
+      embeddingModel: '',
       embeddingDimensions: 768,
       memoryEnabled: true,
       memoryRecallEnabled: true,
@@ -93,9 +93,28 @@ describe('character settings', () => {
       }).success,
     ).toBe(false);
     expect(
-      characterSettingsSchema.safeParse({ llmBaseUrl: 'http://localhost:11434/v1' })
-        .success,
+      characterSettingsSchema.safeParse({
+        llmBaseUrl: 'http://localhost:1234/v1',
+        llmModel: 'local-chat-model',
+      }).success,
     ).toBe(true);
+  });
+
+  it('allows an unconfigured local provider interface but rejects incomplete pairs', () => {
+    expect(
+      characterSettingsSchema.safeParse({
+        llmBaseUrl: '',
+        llmModel: '',
+        embeddingBaseUrl: '',
+        embeddingModel: '',
+      }).success,
+    ).toBe(true);
+    expect(
+      characterSettingsSchema.safeParse({
+        llmBaseUrl: 'http://127.0.0.1:1234/v1',
+        llmModel: '',
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects unsupported embedding dimensions', () => {

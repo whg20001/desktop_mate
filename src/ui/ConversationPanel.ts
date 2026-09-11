@@ -5,7 +5,7 @@ export class ConversationPanel {
 
   constructor(
     private readonly form: HTMLFormElement,
-    private readonly onMessage: (text: string) => Promise<void>,
+    private readonly onMessage: (text: string) => Promise<boolean>,
   ) {
     const input = form.querySelector<HTMLInputElement>('[data-conversation-input]');
     const submit = form.querySelector<HTMLButtonElement>('[data-conversation-submit]');
@@ -32,8 +32,11 @@ export class ConversationPanel {
     this.input.disabled = true;
     this.submit.disabled = true;
     void this.onMessage(text)
-      .then(() => {
-        this.input.value = '';
+      .then((succeeded) => {
+        if (succeeded) this.input.value = '';
+      })
+      .catch(() => {
+        // An unexpected rejection must also preserve the draft for retry.
       })
       .finally(() => {
         this.busy = false;

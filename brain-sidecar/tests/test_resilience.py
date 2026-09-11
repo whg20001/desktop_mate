@@ -100,7 +100,7 @@ class FlakyMemory(ReadyMemory):
 
 
 class OrchestratorRecoveryTests(unittest.TestCase):
-    def test_failed_memory_write_is_retried_from_sqlite_after_restart(self) -> None:
+    def test_pending_memory_write_and_cached_reply_survive_restart(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "sessions.sqlite3"
@@ -119,7 +119,8 @@ class OrchestratorRecoveryTests(unittest.TestCase):
             ).converse(request)
             self.assertEqual(first_llm.calls, 1)
             self.assertTrue(first_store.memory_write_pending("turn-outbox"))
-            self.assertIn("memory write unavailable", first["degradedReasons"][0])
+            self.assertNotIn("degradedReasons", first)
+            self.assertEqual(first_memory.write_attempts, [])
             first_store.close()
 
             recovered_memory = FlakyMemory(failures=0)
@@ -131,8 +132,9 @@ class OrchestratorRecoveryTests(unittest.TestCase):
 
             self.assertEqual(recovered["turnId"], "turn-outbox")
             self.assertEqual(recovered_llm.calls, 0, "a cached turn must not call the LLM again")
-            self.assertEqual(len(recovered_memory.write_attempts), 1)
-            self.assertFalse(recovered_store.memory_write_pending("turn-outbox"))
+            self.assertEqual(recovered_memory.write_attempts, [])
+            self.assertTrue(recovered_store.memory_write_pending("turn-outbox"))
+            self.assertEqual(len(recovered_store.pending_memory_writes()), 1)
             recovered_store.close()
 
     def test_same_turn_id_with_different_input_is_rejected(self) -> None:
@@ -156,7 +158,7 @@ class OrchestratorRecoveryTests(unittest.TestCase):
             finally:
                 store.close()
 
-    def test_recall_and_write_failures_degrade_without_losing_the_reply(self) -> None:
+    def test_recall_failure_degrades_and_memory_write_stays_off_the_reply_path(self) -> None:
         class FullyUnavailableMemory(FlakyMemory):
             def search(self, query, scope, limit):
                 raise RuntimeError("Mem0 search unavailable")
@@ -176,7 +178,8 @@ class OrchestratorRecoveryTests(unittest.TestCase):
                 }
             )
             self.assertEqual(response["text"], "local response")
-            self.assertEqual(len(response["degradedReasons"]), 2)
+            self.assertEqual(len(response["degradedReasons"]), 1)
+            self.assertEqual(memory.write_attempts, [])
             self.assertTrue(store.memory_write_pending("turn-degraded"))
             store.close()
 

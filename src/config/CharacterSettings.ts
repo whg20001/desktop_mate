@@ -20,10 +20,10 @@ export const DEFAULT_SPEECH_SETTINGS = {
 } as const;
 
 export const DEFAULT_BRAIN_SETTINGS = {
-  llmBaseUrl: 'http://127.0.0.1:11434/v1',
-  llmModel: 'qwen2.5:7b',
-  embeddingBaseUrl: 'http://127.0.0.1:11434/v1',
-  embeddingModel: 'nomic-embed-text',
+  llmBaseUrl: '',
+  llmModel: '',
+  embeddingBaseUrl: '',
+  embeddingModel: '',
   embeddingDimensions: 768,
   memoryEnabled: true,
   memoryRecallEnabled: true,
@@ -129,19 +129,21 @@ export const characterSettingsSchema = z.object({
     .string()
     .trim()
     .max(2048)
-    .refine(localEndpoint, 'LLM 地址必须是本机 HTTP 回环地址')
+    .refine((value) => value === '' || localEndpoint(value), 'LLM 地址必须是本机 HTTP 回环地址')
     .default(DEFAULT_BRAIN_SETTINGS.llmBaseUrl),
-  llmModel: z.string().trim().min(1).max(128).default(DEFAULT_BRAIN_SETTINGS.llmModel),
+  llmModel: z.string().trim().max(128).default(DEFAULT_BRAIN_SETTINGS.llmModel),
   embeddingBaseUrl: z
     .string()
     .trim()
     .max(2048)
-    .refine(localEndpoint, 'Embedding 地址必须是本机 HTTP 回环地址')
+    .refine(
+      (value) => value === '' || localEndpoint(value),
+      'Embedding 地址必须是本机 HTTP 回环地址',
+    )
     .default(DEFAULT_BRAIN_SETTINGS.embeddingBaseUrl),
   embeddingModel: z
     .string()
     .trim()
-    .min(1)
     .max(128)
     .default(DEFAULT_BRAIN_SETTINGS.embeddingModel),
   embeddingDimensions: z
@@ -180,6 +182,19 @@ export const characterSettingsSchema = z.object({
     .default(DEFAULT_BRAIN_SETTINGS.graphitiUri),
   graphitiDatabase: z.string().trim().min(1).max(128).default('neo4j'),
   graphitiUser: z.string().trim().min(1).max(128).default('neo4j'),
+}).superRefine((settings, context) => {
+  for (const [urlKey, modelKey, label] of [
+    ['llmBaseUrl', 'llmModel', 'LLM'],
+    ['embeddingBaseUrl', 'embeddingModel', 'Embedding'],
+  ] as const) {
+    if (Boolean(settings[urlKey]) !== Boolean(settings[modelKey])) {
+      context.addIssue({
+        code: 'custom',
+        path: [modelKey],
+        message: label + ' 地址和模型必须同时填写或同时留空',
+      });
+    }
+  }
 });
 
 export type CharacterSettings = z.infer<typeof characterSettingsSchema>;

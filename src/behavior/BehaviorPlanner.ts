@@ -1,30 +1,35 @@
 import type { CharacterResponse } from '../brain/BrainTypes';
 import type { CharacterSettings } from '../config/CharacterSettings';
 import type { ApprovedActionId, BehaviorIntent } from './BehaviorTypes';
-
-const APPROVED_ACTIONS = new Set<ApprovedActionId>(['idle', 'greeting', 'talking']);
+import { BehaviorPolicy } from './BehaviorPolicy';
 
 export class BehaviorPlanner {
+  constructor(private readonly policy = new BehaviorPolicy()) {}
+
   resolve(response: CharacterResponse, settings: CharacterSettings): BehaviorIntent {
-    const behavior: BehaviorIntent = {};
-    if (response.emotion) {
-      behavior.emotion = {
-        kind: response.emotion.type,
-        intensity: response.emotion.intensity,
-        durationMs: response.emotion.durationMs,
-      };
-    }
-    const actionId = response.actionIntent?.id as ApprovedActionId | undefined;
-    if (
-      settings.aiMotionEnabled &&
-      actionId &&
-      APPROVED_ACTIONS.has(actionId) &&
-      settings.enabledAiMotionIds.includes(actionId)
-    ) {
-      behavior.actionId = actionId;
-      behavior.actionIntensity = response.actionIntent?.intensity;
-    }
-    return behavior;
+    return this.policy.evaluate(
+      {
+        source: 'ai',
+        actionId: response.actionIntent?.id,
+        intensity: response.actionIntent?.intensity,
+        emotion: response.emotion
+          ? {
+              kind: response.emotion.type,
+              intensity: response.emotion.intensity,
+              durationMs: response.emotion.durationMs,
+            }
+          : undefined,
+      },
+      settings,
+    );
+  }
+
+  interaction(actionId: ApprovedActionId): BehaviorIntent {
+    return this.policy.evaluate({ source: 'interaction', actionId });
+  }
+
+  audio(durationMs: number): BehaviorIntent {
+    return this.policy.evaluate({ source: 'audio', actionId: 'talking', durationMs });
   }
 }
 

@@ -38,13 +38,6 @@ class ConversationOrchestrator:
         with self._turn_lock(turn_id):
             cached = self.sessions.cached_response(turn_id, scope, user_input)
             if cached is not None:
-                self._complete_memory_write(
-                    turn_id,
-                    scope,
-                    user_input,
-                    cached["text"],
-                    cached,
-                )
                 return cached
 
             recent = self.sessions.recent(scope, 12)
@@ -74,37 +67,12 @@ class ConversationOrchestrator:
                 response,
                 self.config.memory_enabled and self.config.memory_write_enabled,
             )
-            self._complete_memory_write(turn_id, scope, user_input, response["text"], response)
+            # The reply and pending memory write are committed together. Only the
+            # MemoryManager worker extracts memories, including after a restart.
             return response
 
     def _turn_lock(self, turn_id: str) -> threading.Lock:
         return self._turn_locks[hash(turn_id) % len(self._turn_locks)]
-
-    def _complete_memory_write(
-        self,
-        turn_id: str,
-        scope: dict[str, str],
-        user_input: str,
-        assistant_text: str,
-        response: dict[str, Any],
-    ) -> None:
-        if not self.sessions.memory_write_pending(turn_id):
-            return
-        try:
-            self.memory.remember_turn(
-                [
-                    {"role": "user", "content": user_input},
-                    {"role": "assistant", "content": assistant_text},
-                ],
-                scope,
-                turn_id,
-            )
-            self.sessions.complete_memory_write(turn_id)
-        except Exception as error:
-            warning = _safe_failure("memory write", error)
-            reasons = response.setdefault("degradedReasons", [])
-            if warning not in reasons:
-                reasons.append(warning)
 
 
 def validate_character_response(

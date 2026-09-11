@@ -70,20 +70,55 @@ class MemoryEventStore:
             CREATE INDEX IF NOT EXISTS idx_memory_delivery_outbox
               ON memory_deliveries(status, next_attempt_unix_ms, updated_at_unix_ms);
 
+            CREATE TABLE IF NOT EXISTS processed_memory_turns (
+              user_id TEXT NOT NULL, character_id TEXT NOT NULL, turn_id TEXT NOT NULL,
+              PRIMARY KEY(user_id, character_id, turn_id)
+            );
+
             """
         )
         self._connection.commit()
+        self._in_batch = False
+
+    def turn_processed(self, scope: dict[str, str], turn_id: str) -> bool:
+        with self._lock:
+            return self._connection.execute(
+                'SELECT 1 FROM processed_memory_turns WHERE user_id=? AND character_id=? AND turn_id=?',
+                (*_scope(scope), turn_id),
+            ).fetchone() is not None
+
+    def apply_turn(self, scope: dict[str, str], turn_id: str,
+                   events: Iterable[ApprovedMemoryEvent], providers: Iterable[str], *, deduplicate: bool = True) -> None:
+        # Facts, index jobs, and the receipt share one transaction. A crash cannot
+        # leave facts committed without a receipt, even when inference changes wording.
+        with self._lock:
+            if self.turn_processed(scope, turn_id):
+                return
+            self._in_batch = True
+            try:
+                for event in events:
+                    self.add(event, providers, deduplicate=deduplicate)
+                self._connection.execute('INSERT INTO processed_memory_turns VALUES (?, ?, ?)',
+                                         (*_scope(scope), turn_id))
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+            finally:
+                self._in_batch = False
 
     def close(self) -> None:
         with self._lock:
             self._connection.close()
 
-    def add(self, event: ApprovedMemoryEvent, providers: Iterable[str]) -> ApprovedMemoryEvent:
+    def add(self, event: ApprovedMemoryEvent, providers: Iterable[str], *, deduplicate: bool = True) -> ApprovedMemoryEvent:
         with self._lock:
             existing = self._connection.execute(
                 """SELECT * FROM memory_events
                    WHERE user_id = ?1 AND character_id = ?2 AND content_hash = ?3
                      AND kind = ?4
+                     AND (?4 = 'semantic' OR
+                          (occurred_at_unix_ms IS ?5 AND source_event_ids_json = ?6))
                      AND status IN ('pending', 'approved')
                    ORDER BY created_at_unix_ms DESC LIMIT 1""",
                 (
@@ -91,9 +126,11 @@ class MemoryEventStore:
                     event.scope["characterId"],
                     event.content_hash,
                     event.kind,
+                    event.occurred_at_unix_ms,
+                    json.dumps(event.source_event_ids, ensure_ascii=False, separators=(",", ":")),
                 ),
             ).fetchone()
-            if existing is not None:
+            if deduplicate and existing is not None:
                 if existing["status"] == "approved":
                     now = _now()
                     for provider in providers:
@@ -104,7 +141,8 @@ class MemoryEventStore:
                                ) VALUES (?1, ?2, 'upsert', 'pending', 0, 0, ?3)""",
                             (existing["event_id"], provider, now),
                         )
-                    self._connection.commit()
+                    if not self._in_batch:
+                        self._connection.commit()
                 return _event_from_row(existing)
             try:
                 self._connection.execute(
@@ -118,13 +156,15 @@ class MemoryEventStore:
                     _event_values(event),
                 )
                 if event.status == "approved":
+                    self._retire_superseded(event, providers)
                     self._queue(
                         event.event_id,
                         providers,
                         "upsert",
                         event.created_at_unix_ms,
                     )
-                self._connection.commit()
+                if not self._in_batch:
+                    self._connection.commit()
             except Exception:
                 self._connection.rollback()
                 raise
@@ -168,11 +208,12 @@ class MemoryEventStore:
         return _event_from_row(row)
 
     def approve(self, event_id: str, scope: dict[str, str], providers: Iterable[str]) -> None:
-        event = self.get(event_id, scope)
-        if event.status != "pending":
-            raise ValueError("only pending memories can be approved")
-        now = _now()
-        with self._lock:
+        with self._lock, self._connection:
+            event = self.get(event_id, scope)
+            if event.status != "pending":
+                raise ValueError("only pending memories can be approved")
+            now = _now()
+            self._retire_superseded(event, providers)
             self._connection.execute(
                 """UPDATE memory_events SET status = 'approved', revision = revision + 1,
                    updated_at_unix_ms = ?1 WHERE event_id = ?2""",
@@ -182,10 +223,10 @@ class MemoryEventStore:
             self._connection.commit()
 
     def reject(self, event_id: str, scope: dict[str, str]) -> None:
-        event = self.get(event_id, scope)
-        if event.status != "pending":
-            raise ValueError("only pending memories can be rejected")
-        with self._lock:
+        with self._lock, self._connection:
+            event = self.get(event_id, scope)
+            if event.status != "pending":
+                raise ValueError("only pending memories can be rejected")
             self._connection.execute(
                 """UPDATE memory_events SET status = 'rejected', content = '',
                    tags_json = '[]', source_event_ids_json = '[]', metadata_json = '{}',
@@ -193,6 +234,7 @@ class MemoryEventStore:
                    updated_at_unix_ms = ?1 WHERE event_id = ?2""",
                 (_now(), event_id),
             )
+            self._queue(event_id, self._delivery_providers(event_id, ()), 'delete', _now())
             self._connection.commit()
 
     def update(
@@ -203,11 +245,11 @@ class MemoryEventStore:
         content_hash: str,
         providers: Iterable[str],
     ) -> None:
-        event = self.get(event_id, scope)
-        if event.status not in {"pending", "approved"}:
-            raise ValueError("memory cannot be updated")
-        now = _now()
-        with self._lock:
+        with self._lock, self._connection:
+            event = self.get(event_id, scope)
+            if event.status not in {"pending", "approved"}:
+                raise ValueError("memory cannot be updated")
+            now = _now()
             targets = self._delivery_providers(event_id, providers)
             self._connection.execute(
                 """UPDATE memory_events
@@ -226,11 +268,11 @@ class MemoryEventStore:
         scope: dict[str, str],
         providers: Iterable[str],
     ) -> None:
-        event = self.get(event_id, scope)
-        if event.status == "deleted":
-            return
-        now = _now()
-        with self._lock:
+        with self._lock, self._connection:
+            event = self.get(event_id, scope)
+            if event.status == "deleted":
+                return
+            now = _now()
             targets = self._delivery_providers(event_id, providers)
             self._connection.execute(
                 """UPDATE memory_events
@@ -269,7 +311,7 @@ class MemoryEventStore:
                    JOIN memory_events e ON e.event_id = d.event_id
                    WHERE d.status = 'pending' AND d.next_attempt_unix_ms <= ?"""
                 + provider_clause
-                + " ORDER BY d.updated_at_unix_ms LIMIT ?",
+                + " ORDER BY CASE d.operation WHEN 'delete' THEN 0 ELSE 1 END, d.updated_at_unix_ms LIMIT ?",
                 parameters,
             ).fetchall()
         return [
@@ -295,7 +337,7 @@ class MemoryEventStore:
                        WHERE event_id = ?1 AND provider = ?2 AND operation = 'delete'
                          AND EXISTS (
                            SELECT 1 FROM memory_events e WHERE e.event_id = ?1
-                             AND e.revision = ?3 AND e.status = 'deleted'
+                             AND e.revision = ?3 AND e.status IN ('deleted', 'rejected')
                          )""",
                     (delivery.event.event_id, delivery.provider, delivery.event.revision),
                 )
@@ -348,9 +390,9 @@ class MemoryEventStore:
             return cursor.rowcount == 1
 
     def queue_rebuild(self, provider: str, scope: dict[str, str] | None = None) -> int:
-        events = self.active(scope)
-        now = _now()
-        with self._lock:
+        with self._lock, self._connection:
+            events = self.active(scope)
+            now = _now()
             for event in events:
                 self._queue(event.event_id, (provider,), "upsert", now)
             self._connection.commit()
@@ -365,6 +407,62 @@ class MemoryEventStore:
             ).fetchone()
         return None if row is None else row[0]
 
+    def resolve_provider_record(self, provider: str, record_id: str,
+                                scope: dict[str, str]) -> ApprovedMemoryEvent | None:
+        with self._lock:
+            row = self._connection.execute(
+                '''SELECT e.* FROM memory_events e JOIN memory_deliveries d ON e.event_id=d.event_id
+                   WHERE d.provider=? AND d.provider_record_id=? AND e.user_id=? AND e.character_id=?''',
+                (provider, record_id, *_scope(scope)),
+            ).fetchone()
+        return _event_from_row(row) if row else None
+
+    def link_provider_record(self, event_id: str, provider: str, record_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                '''INSERT INTO memory_deliveries(event_id,provider,operation,status,provider_record_id,updated_at_unix_ms)
+                   VALUES (?,?,'upsert','complete',?,?)
+                   ON CONFLICT(event_id,provider) DO UPDATE SET provider_record_id=excluded.provider_record_id''',
+                (event_id, provider, record_id, _now()),
+            )
+            self._connection.commit()
+
+    def provider_index_current(self, event_id: str, provider: str) -> bool:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT 1 FROM memory_deliveries WHERE event_id=? AND provider=? AND status='complete' AND operation='upsert'",
+                (event_id, provider),
+            ).fetchone() is not None
+
+    def retry_deliveries(self, scope: dict[str, str]) -> None:
+        with self._lock:
+            self._connection.execute(
+                '''UPDATE memory_deliveries SET next_attempt_unix_ms=0 WHERE status='pending'
+                   AND event_id IN (SELECT event_id FROM memory_events WHERE user_id=? AND character_id=?)''',
+                _scope(scope),
+            )
+            self._connection.commit()
+
+    def _retire_superseded(self, event: ApprovedMemoryEvent, providers: Iterable[str]) -> None:
+        for identifier in event.metadata.get('supersedes', []):
+            if identifier == event.event_id:
+                continue
+            try:
+                previous = self.get(identifier, event.scope)
+            except ValueError:
+                continue
+            expected = event.metadata.get('supersedesVersions', {}).get(identifier)
+            if expected is not None and (expected != previous.revision or previous.status != 'approved'):
+                raise ValueError('correction target changed; review the current fact again')
+            if previous.status != 'approved' or previous.kind != 'semantic':
+                continue
+            self._connection.execute(
+                "UPDATE memory_events SET status='deleted', content='', metadata_json='{}', tags_json='[]', "
+                "source_event_ids_json='[]', revision=revision+1, updated_at_unix_ms=? WHERE event_id=?",
+                (_now(), identifier),
+            )
+            self._queue(identifier, self._delivery_providers(identifier, providers), 'delete', _now())
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             event_rows = self._connection.execute(
@@ -374,7 +472,15 @@ class MemoryEventStore:
                 """SELECT provider, status, COUNT(*) FROM memory_deliveries
                    GROUP BY provider, status"""
             ).fetchall()
+            pending = self._connection.execute(
+                "SELECT COUNT(*), MIN(updated_at_unix_ms), COALESCE(SUM(attempts),0) FROM memory_deliveries WHERE status='pending'",
+            ).fetchone()
+            last_error = self._connection.execute(
+                "SELECT last_error_type FROM memory_deliveries WHERE status='pending' AND last_error_type IS NOT NULL ORDER BY updated_at_unix_ms DESC LIMIT 1",
+            ).fetchone()
         return {
+            'indexQueue': {'pending': pending[0], 'oldestWaitMs': max(0, _now() - pending[1]) if pending[1] else 0,
+                           'failedAttempts': pending[2], 'lastError': last_error[0] if last_error else None},
             "events": {row[0]: row[1] for row in event_rows},
             "deliveries": {
                 f"{row[0]}:{row[1]}": row[2] for row in delivery_rows
@@ -479,4 +585,5 @@ def _event_from_row(row: sqlite3.Row) -> ApprovedMemoryEvent:
         metadata=json.loads(row["metadata_json"]),
         status=row["status"],
         revision=int(row["revision"]),
+        updated_at_unix_ms=int(row["updated_at_unix_ms"]),
     )

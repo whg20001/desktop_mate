@@ -112,6 +112,17 @@ impl BrainClient {
         .await
     }
 
+    pub async fn retry_memory(&self, scope: &ConversationScope) -> Result<(), String> {
+        let _: serde_json::Value = self
+            .request(
+                Method::POST,
+                "v1/memories/retry",
+                Some(&serde_json::json!({ "scope": scope })),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn decide_memory(
         &self,
         scope: &ConversationScope,

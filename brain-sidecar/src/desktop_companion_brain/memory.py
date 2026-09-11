@@ -45,6 +45,7 @@ class MemoryPort(Protocol):
     def reject(self, memory_id: str, scope: dict[str, str]) -> None: ...
     def rebuild(self, provider: str, scope: dict[str, str] | None = None) -> int: ...
     def status(self) -> dict[str, Any]: ...
+    def retry(self, scope: dict[str, str]) -> None: ...
 
 
 class LongTermMemoryProvider(Protocol):
@@ -59,6 +60,9 @@ class LongTermMemoryProvider(Protocol):
 
 
 class DisabledMemory:
+    def retry(self, scope: dict[str, str]) -> None:
+        raise RuntimeError('long-term memory is disabled')
+
     def ready(self) -> tuple[bool, str]:
         return True, "long-term memory is disabled"
 
@@ -149,8 +153,14 @@ class Mem0Memory:
         return True, "Mem0 uses local LLM, embedding, SQLite history and embedded Qdrant"
 
     def search(self, query: str, scope: dict[str, str], limit: int) -> list[dict[str, Any]]:
-        with self._lock:
-            result = self._require().search(query=query, limit=limit, **_filters(scope))
+        # Embedded Qdrant mutations remain serialized, but a slow index write
+        # must not make the conversational fallback wait for the lock.
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError('memory index is busy; use canonical retrieval')
+        try:
+            result = self._require().search(query=query, limit=limit, threshold=0.35, **_filters(scope))
+        finally:
+            self._lock.release()
         values = result.get("results", result) if isinstance(result, dict) else result
         if not isinstance(values, list):
             raise RuntimeError("Mem0 search response is invalid")
@@ -168,8 +178,8 @@ class Mem0Memory:
         if not content.strip() or contains_sensitive(content):
             raise ValueError("memory content is empty or sensitive")
         with self._lock:
-            self._require_scope(memory_id, scope)
-            self._require().update(memory_id=memory_id, data=content.strip())
+            record = self._require_scope(memory_id, scope)
+            self._require().update(memory_id=memory_id, data=content.strip(), metadata=record.get('metadata', {}))
 
     def delete(self, memory_id: str, scope: dict[str, str]) -> None:
         with self._lock:
@@ -183,21 +193,19 @@ class Mem0Memory:
     ) -> str:
         with self._lock:
             record_id = provider_record_id or self._record_for_event(event)
+            metadata = {
+                'canonicalEventId': event.event_id, 'kind': event.kind,
+                'importance': event.importance, 'revision': event.revision,
+                'originSessionId': event.scope['sessionId'], 'localOnly': True,
+            }
             if record_id:
                 self._require_scope(record_id, event.scope)
-                self._require().update(memory_id=record_id, data=event.content)
+                self._require().update(memory_id=record_id, data=event.content, metadata=metadata)
                 return record_id
             result = self._require().add(
                 event.content,
                 infer=False,
-                metadata={
-                    "canonicalEventId": event.event_id,
-                    "kind": event.kind,
-                    "importance": event.importance,
-                    "revision": event.revision,
-                    "originSessionId": event.scope["sessionId"],
-                    "localOnly": True,
-                },
+                metadata=metadata,
                 **_filters(event.scope),
             )
         values = result.get("results", result) if isinstance(result, dict) else result
@@ -214,20 +222,17 @@ class Mem0Memory:
         raise RuntimeError("Mem0 did not return the created memory id")
 
     def delete_record(self, provider_record_id: str, scope: dict[str, str]) -> None:
-        record_id = provider_record_id
-        records = self.list(scope)
-        if not any(record["id"] == record_id for record in records):
-            record_id = next(
-                (
-                    record["id"]
-                    for record in records
-                    if record.get("metadata", {}).get("canonicalEventId")
-                    == provider_record_id
-                ),
-                "",
+        with self._lock:
+            record = self._require().get(provider_record_id)
+            if record:
+                self.delete(provider_record_id, scope)
+                return
+            result = self._require().get_all(
+                filters={'canonicalEventId': provider_record_id}, limit=1, **_filters(scope),
             )
-        if record_id:
-            self.delete(record_id, scope)
+            records = result.get('results', []) if isinstance(result, dict) else result
+            if records:
+                self.delete(records[0]['id'], scope)
 
     def close(self) -> None:
         if self._memory is None:
@@ -249,15 +254,17 @@ class Mem0Memory:
             raise RuntimeError(self._startup_error or "Mem0 is unavailable")
         return self._memory
 
-    def _require_scope(self, memory_id: str, scope: dict[str, str]) -> None:
-        if not any(record["id"] == memory_id for record in self.list(scope)):
+    def _require_scope(self, memory_id: str, scope: dict[str, str]) -> dict[str, Any]:
+        record = self._require().get(memory_id)
+        if not isinstance(record, dict) or any(record.get(key) != value for key, value in _filters(scope).items()):
             raise ValueError("memory does not belong to the requested scope")
+        return record
 
     def _record_for_event(self, event: ApprovedMemoryEvent) -> str | None:
-        for record in self.list(event.scope):
-            metadata = record.get("metadata", {})
-            if metadata.get("canonicalEventId") == event.event_id:
-                return record["id"]
+        result = self._require().get_all(filters={'canonicalEventId': event.event_id}, limit=1, **_filters(event.scope))
+        records = result.get('results', []) if isinstance(result, dict) else result
+        if records:
+            return records[0]['id']
         return None
 
 
@@ -270,6 +277,14 @@ def create_memory(
     from .memory_manager import MemoryManager
 
     return MemoryManager(config, sessions)
+
+
+def create_providers(config: SidecarConfig) -> list[LongTermMemoryProvider]:
+    providers: list[LongTermMemoryProvider] = [Mem0Memory(config)]
+    if config.graphiti_enabled:
+        from .graphiti_provider import GraphitiMemory
+        providers.append(GraphitiMemory(config))
+    return providers
 
 
 def contains_sensitive(content: str) -> bool:
