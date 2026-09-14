@@ -15,6 +15,8 @@ import { CharacterRenderer } from '../renderer/CharacterRenderer';
 import { RenderLoop } from '../renderer/RenderLoop';
 import { SpeechController } from '../speech/SpeechController';
 import { WebSpeechEngine } from '../speech/WebSpeechEngine';
+import { TauriSpeechEngine } from '../speech/TauriSpeechEngine';
+import { isNativeAudio, listAudioVoices, resolveVoice, listenAudioModelChanges } from '../speech/AudioIpc';
 import type { SpeechSource } from '../speech/SpeechTypes';
 import { SpeechBubble } from '../ui/SpeechBubble';
 import { ConversationPanel } from '../ui/ConversationPanel';
@@ -49,7 +51,28 @@ export async function bootstrap(): Promise<() => void> {
   const character = new CharacterRuntime(renderer, bridge, manifest);
   const report = await character.load(resolveAssetUrl(manifestUrl, manifest.model));
   character.applySettings(settings);
-  const voice = new SpeechController(new WebSpeechEngine(), character);
+  const voice = new SpeechController(isNativeAudio() ? new TauriSpeechEngine() : new WebSpeechEngine(), character);
+  let modelVersion = 0;
+  const stopModelSync = isNativeAudio() ? await listenAudioModelChanges(() => {
+    modelVersion++;
+    voice.cancel();
+    settings = { ...settings, speechVoiceId: '' };
+    saveCharacterSettings(settings);
+  }) : () => {};
+  if (isNativeAudio()) {
+    const version = modelVersion;
+    void listAudioVoices().then((voices) => {
+      if (version !== modelVersion) return;
+      const selected = resolveVoice(voices, settings.speechVoiceId, settings.speechLanguage);
+      if (selected.migrated) {
+        speech.show('原音色已更换为当前模型的可用音色，请到声音设置中试听确认。', 8_000);
+      }
+      if (selected.id !== settings.speechVoiceId) {
+        settings = { ...settings, speechVoiceId: selected.id };
+        saveCharacterSettings(settings);
+      }
+    }).catch(() => { /* Text and interaction remain available without native voices. */ });
+  }
   const sessionId =
     window.sessionStorage.getItem('desktop-companion.conversation-session') ??
     crypto.randomUUID();
@@ -91,7 +114,7 @@ export async function bootstrap(): Promise<() => void> {
       speech.show(nextSettings.displayName + '：' + message);
       void speakWithSettings(message, 'system', nextSettings).catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : '未知错误';
-        speech.show(nextSettings.displayName + '：语音试听失败。');
+        speech.show(nextSettings.displayName + '：' + detail, 8_000);
         console.warn('[speech preview]', detail);
       });
     },
@@ -146,7 +169,7 @@ export async function bootstrap(): Promise<() => void> {
         character.applyBehavior(behavior.resolve(response, settings));
         if (settings.speechEnabled && response.speech?.text) {
           void speakWithSettings(response.speech.text, 'ai').catch((error: unknown) => {
-            console.warn('[speech]', error instanceof Error ? error.message : '播放失败');
+            speech.show(settings.displayName + '：' + response.text + '（语音：' + (error instanceof Error ? error.message : '播放失败') + '）', 8_000);
           });
         }
         return true;
@@ -173,6 +196,7 @@ export async function bootstrap(): Promise<() => void> {
     pointer.detach();
     conversation.dispose();
     stopSettingsSync();
+    stopModelSync();
     voice.dispose();
     loop.stop();
     character.dispose();

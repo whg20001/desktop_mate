@@ -14,7 +14,7 @@
             <h1 id="settings-title">助手配置中心</h1>
             <p class="settings-subtitle">管理当前角色、声音和动作能力</p>
           </div>
-          <span class="settings-status-badge">调试模式</span>
+          <div class="runtime-status"><span class="settings-status-badge">调试模式</span><small data-audio-summary>正在读取语音模型…</small></div>
         </header>
 
         <form id="settings-form">
@@ -194,9 +194,22 @@
                     <p class="settings-page-kicker">VOICE</p>
                     <h2>声音配置</h2>
                   </div>
-                  <p>所有试听和后续 AI 回复共用角色窗口中的 SpeechController。</p>
+                  <p>试听和后续 AI 回复均使用当前语音设置。</p>
                 </header>
 
+                <fieldset class="settings-section audio-model-controls">
+                  <legend>语音模型</legend>
+                  <label class="settings-field"><span>选择模型</span>
+                    <select data-audio-model-select aria-label="语音模型"><option value="windows">Windows 系统语音</option></select>
+                  </label>
+                  <p data-audio-model-status role="status" aria-live="polite">正在读取模型状态…</p>
+                  <details class="settings-note"><summary>最近一次语音耗时</summary>
+                    <p data-audio-timings>尚无语音请求，试听后显示分阶段耗时。</p>
+                    <p>首块时间从请求进入音频服务开始计算；生成、解码和播放可能重叠。启动前会按生成速度积累音频，慢速短句可能生成完后播放。启动缓冲不计入播放欠载。</p>
+                  </details>
+                  <button type="button" class="settings-utility-button" data-audio-model-apply>启动并切换</button>
+                  <p class="settings-note">切换立即生效并自动记住，会停止当前语音。切回系统语音后释放模型显存。</p>
+                </fieldset>
                 <fieldset class="settings-section speech-controls">
                   <legend>语音输出</legend>
                   <label class="toggle-row settings-master-toggle">
@@ -208,11 +221,11 @@
                   </label>
                   <div class="settings-field-grid">
                     <label>
-                      <span>系统音色</span>
+                      <span>音色 / 说话人</span>
                       <select name="speechVoiceId" data-speech-control>
                         <option value="">跟随系统默认</option>
                       </select>
-                      <small>音色来自 Windows WebView2 可用的系统语音。</small>
+                      <small>音色来自当前语音模型；更换后可点击试听。</small>
                     </label>
                     <label>
                       <span>语言</span>
@@ -255,6 +268,7 @@
                       <input name="speechPitch" data-speech-setting data-speech-control type="range" min="0" max="2" step="0.05" />
                     </label>
                   </div>
+                  <p class="settings-note" data-audio-parameter-note></p>
                   <div class="speech-controls-footer">
                     <p class="settings-note">试听不会保存；保存后用于角色问候和后续 AI 语音。</p>
                     <div class="speech-actions">

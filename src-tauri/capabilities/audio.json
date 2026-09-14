@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "character-audio",
+  "description": "Only the character window controls native playback.",
+  "windows": [
+    "character"
+  ],
+  "permissions": [
+    "audio-playback"
+  ]
+}

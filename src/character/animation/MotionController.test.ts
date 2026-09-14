@@ -167,4 +167,19 @@ describe('MotionController', () => {
       ),
     ).toBe(0);
   });
+  it('uses amplitude-only mouth opening and stops a remaining talking gesture on audio completion', () => {
+    const runtime = new RuntimeStub();
+    const controller = new MotionController(runtime, () => 0.5);
+    controller.attach();
+    controller.talk(5);
+    controller.setSpeechFrame({ active: true, level: 0.8 });
+    advance(controller, 0.5);
+    expect(runtime.morphs.get('a')).toBeGreaterThan(0.4);
+    for (const morph of ['i', 'u', 'e', 'o'] as const) expect(runtime.morphs.get(morph)).toBe(0);
+    controller.setSpeechFrame({ active: false, level: 0 });
+    expect(runtime.morphs.get('a')).toBe(0);
+    advance(controller, 0.2);
+    expect(runtime.morphs.get('a')).toBe(0);
+  });
+
 });

@@ -1,3 +1,5 @@
+import { AudioModelPanel } from './AudioModelPanel';
+import { isNativeAudio, listAudioVoices, resolveVoice, audioError } from '../speech/AudioIpc';
 import { CHARACTER_CATALOG, findCharacterCatalogEntry } from '../character/CharacterCatalog';
 import {
   MOTION_CATALOG,
@@ -46,6 +48,11 @@ export class SettingsPanel {
   private readonly tabPanels: HTMLElement[];
   private settings: CharacterSettings;
   private closing = false;
+  private disposed = false;
+  private voiceLoad = 0;
+  private readonly audioModels: AudioModelPanel;
+  private nativeModel: string | undefined;
+  private modelReady = true;
 
   constructor(
     private readonly element: HTMLElement,
@@ -62,13 +69,25 @@ export class SettingsPanel {
     this.tabButtons = [...element.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')];
     this.tabPanels = [...element.querySelectorAll<HTMLElement>('[data-settings-page]')];
 
+    this.audioModels = new AudioModelPanel(element, (status) => {
+      const changed = this.nativeModel !== undefined && this.nativeModel !== status.selectedModel;
+      this.voiceLoad++;
+      if (changed) {
+        this.voiceSelect.value = '';
+        this.settings = { ...this.settings, speechVoiceId: '' };
+      }
+      this.nativeModel = status.selectedModel;
+      this.modelReady = status.phase === 'ready';
+      if (this.modelReady) this.populateVoices(changed ? '' : this.voiceSelect.value || this.settings.speechVoiceId);
+      this.updateSpeechControls();
+    });
     this.populateCharacterModels();
     this.populateMotionCatalog();
     this.element.addEventListener('click', this.onPanelClick);
     this.form.addEventListener('submit', this.onSubmit);
     this.form.addEventListener('input', this.onInput);
     window.addEventListener('keydown', this.onKeyDown);
-    if ('speechSynthesis' in window) {
+    if (!isNativeAudio() && 'speechSynthesis' in window) {
       window.speechSynthesis.addEventListener('voiceschanged', this.onVoicesChanged);
     }
   }
@@ -87,82 +106,26 @@ export class SettingsPanel {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.audioModels.dispose();
     this.element.removeEventListener('click', this.onPanelClick);
     this.form.removeEventListener('submit', this.onSubmit);
     this.form.removeEventListener('input', this.onInput);
     window.removeEventListener('keydown', this.onKeyDown);
-    if ('speechSynthesis' in window) {
+    if (!isNativeAudio() && 'speechSynthesis' in window) {
       window.speechSynthesis.removeEventListener('voiceschanged', this.onVoicesChanged);
     }
   }
 
   private writeForm(): void {
     this.ensureSavedCharacterModel();
-    this.characterModelSelect.value = this.settings.characterModelId;
-    requiredElement<HTMLInputElement>(this.form, '[name="displayName"]').value =
-      this.settings.displayName;
-    requiredElement<HTMLInputElement>(this.form, '[name="scale"]').value =
-      String(this.settings.scale);
-    requiredElement<HTMLInputElement>(this.form, '[name="followCursor"]').checked =
-      this.settings.followCursor;
-    requiredElement<HTMLInputElement>(this.form, '[name="breathing"]').checked =
-      this.settings.breathing;
-    requiredElement<HTMLInputElement>(this.form, '[name="materialAmbientScale"]').value =
-      String(this.settings.materialAmbientScale);
-    requiredElement<HTMLInputElement>(this.form, '[name="hemisphereLightIntensity"]').value =
-      String(this.settings.hemisphereLightIntensity);
-    requiredElement<HTMLInputElement>(this.form, '[name="directionalLightIntensity"]').value =
-      String(this.settings.directionalLightIntensity);
-    requiredElement<HTMLInputElement>(this.form, '[name="speechEnabled"]').checked =
-      this.settings.speechEnabled;
-    this.voiceSelect.value = this.settings.speechVoiceId;
-    requiredElement<HTMLInputElement>(this.form, '[name="speechLanguage"]').value =
-      this.settings.speechLanguage;
-    requiredElement<HTMLInputElement>(this.form, '[name="speechRate"]').value =
-      String(this.settings.speechRate);
-    requiredElement<HTMLInputElement>(this.form, '[name="speechPitch"]').value =
-      String(this.settings.speechPitch);
-    requiredElement<HTMLInputElement>(this.form, '[name="speechVolume"]').value =
-      String(this.settings.speechVolume);
-    requiredElement<HTMLInputElement>(this.form, '[name="aiMotionEnabled"]').checked =
-      this.settings.aiMotionEnabled;
+    const { enabledAiMotionIds, ...fields } = this.settings;
+    this.writeFields(fields);
     this.form
       .querySelectorAll<HTMLInputElement>('[name="enabledAiMotionIds"]')
       .forEach((input) => {
-        input.checked = this.settings.enabledAiMotionIds.includes(input.value as AiMotionId);
+        input.checked = enabledAiMotionIds.includes(input.value as AiMotionId);
       });
-    requiredElement<HTMLInputElement>(this.form, '[name="llmBaseUrl"]').value =
-      this.settings.llmBaseUrl;
-    requiredElement<HTMLInputElement>(this.form, '[name="llmModel"]').value =
-      this.settings.llmModel;
-    requiredElement<HTMLInputElement>(this.form, '[name="embeddingBaseUrl"]').value =
-      this.settings.embeddingBaseUrl;
-    requiredElement<HTMLInputElement>(this.form, '[name="embeddingModel"]').value =
-      this.settings.embeddingModel;
-    requiredElement<HTMLInputElement>(this.form, '[name="embeddingDimensions"]').value =
-      String(this.settings.embeddingDimensions);
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryEnabled"]').checked =
-      this.settings.memoryEnabled;
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallEnabled"]').checked =
-      this.settings.memoryRecallEnabled;
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryWriteEnabled"]').checked =
-      this.settings.memoryWriteEnabled;
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryRecallLimit"]').value =
-      String(this.settings.memoryRecallLimit);
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryApprovalRequired"]').checked =
-      this.settings.memoryApprovalRequired;
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryMinimumImportance"]').value =
-      String(this.settings.memoryMinimumImportance);
-    requiredElement<HTMLInputElement>(this.form, '[name="memoryRetentionDays"]').value =
-      String(this.settings.memoryRetentionDays);
-    requiredElement<HTMLInputElement>(this.form, '[name="graphitiEnabled"]').checked =
-      this.settings.graphitiEnabled;
-    requiredElement<HTMLInputElement>(this.form, '[name="graphitiUri"]').value =
-      this.settings.graphitiUri;
-    requiredElement<HTMLInputElement>(this.form, '[name="graphitiDatabase"]').value =
-      this.settings.graphitiDatabase;
-    requiredElement<HTMLInputElement>(this.form, '[name="graphitiUser"]').value =
-      this.settings.graphitiUser;
 
     this.scaleOutput.value = this.settings.scale.toFixed(2);
     this.updateCharacterModelSummary();
@@ -170,6 +133,18 @@ export class SettingsPanel {
     this.updateSpeechControls();
     this.updateMotionControls();
     this.updateBrainControls();
+  }
+
+  private writeFields(values: Partial<Omit<CharacterSettings, 'enabledAiMotionIds'>>): void {
+    for (const [name, value] of Object.entries(values)) {
+      const selector = '[name="' + name + '"]';
+      if (typeof value === 'boolean') {
+        requiredElement<HTMLInputElement>(this.form, selector).checked = value;
+      } else {
+        requiredElement<HTMLInputElement | HTMLSelectElement>(this.form, selector).value =
+          String(value);
+      }
+    }
   }
 
   private parseForm() {
@@ -405,6 +380,10 @@ export class SettingsPanel {
   }
 
   private populateVoices(selectedVoiceId = this.settings.speechVoiceId): void {
+    if (isNativeAudio()) {
+      void this.populateNativeVoices(selectedVoiceId);
+      return;
+    }
     this.voiceSelect.replaceChildren();
     const defaultOption = document.createElement('option');
     defaultOption.value = '';
@@ -440,6 +419,31 @@ export class SettingsPanel {
     this.voiceSelect.value = selectedVoiceId;
   }
 
+  private async populateNativeVoices(selectedVoiceId: string): Promise<void> {
+    const load = ++this.voiceLoad;
+    try {
+      const voices = await listAudioVoices();
+      if (this.disposed || load !== this.voiceLoad) return;
+      const language = requiredElement<HTMLInputElement>(this.form, '[name="speechLanguage"]').value;
+      const selected = resolveVoice(voices, selectedVoiceId, language);
+      this.voiceSelect.replaceChildren();
+      const automatic = document.createElement('option');
+      automatic.value = ''; automatic.textContent = this.nativeModel === 'windows' ? '使用所选语言的已安装音色' : '使用模型默认音色';
+      this.voiceSelect.append(automatic);
+      for (const voice of voices) {
+        const option = document.createElement('option');
+        option.value = voice.id; option.dataset.language = voice.language;
+        option.textContent = voice.language ? voice.name + ' · ' + voice.language : voice.name;
+        this.voiceSelect.append(option);
+      }
+      this.voiceSelect.value = selected.id;
+      if (selected.migrated) this.feedback.textContent = '已匹配当前模型的音色，请试听并保存。';
+      if (!voices.length) this.feedback.textContent = '当前模型没有可用音色，请检查模型状态。';
+    } catch (error: unknown) {
+      if (!this.disposed && load === this.voiceLoad) this.feedback.textContent = audioError(error).message;
+    }
+  }
+
   private updateSpeechControls(): void {
     for (const name of ['speechRate', 'speechPitch', 'speechVolume'] as const) {
       const input = requiredElement<HTMLInputElement>(
@@ -461,7 +465,13 @@ export class SettingsPanel {
       .forEach((control) => {
         control.disabled = !enabled;
       });
-    this.voicePreviewButton.disabled = !enabled;
+    const modelVoice = isNativeAudio() && this.nativeModel !== 'windows';
+    for (const name of ['speechRate', 'speechPitch']) {
+      requiredElement<HTMLInputElement>(this.form, '[name="' + name + '"]').disabled = !enabled || modelVoice;
+    }
+    const note = this.form.querySelector<HTMLElement>('[data-audio-parameter-note]');
+    if (note) note.textContent = modelVoice ? '此模型使用默认语速和语调，支持切换预设说话人；音量调节正常生效。' : '';
+    this.voicePreviewButton.disabled = !enabled || !this.modelReady;
   }
 
   private updateMotionControls(): void {
@@ -498,27 +508,12 @@ export class SettingsPanel {
   }
 
   private resetBrainSettings(): void {
-    for (const [name, value] of Object.entries(DEFAULT_BRAIN_SETTINGS)) {
-      const input = requiredElement<HTMLInputElement>(this.form, '[name="' + name + '"]');
-      if (typeof value === 'boolean') input.checked = value;
-      else input.value = String(value);
-    }
+    this.writeFields(DEFAULT_BRAIN_SETTINGS);
     this.updateBrainControls();
   }
 
   private resetSpeechSettings(): void {
-    requiredElement<HTMLInputElement>(this.form, '[name="speechEnabled"]').checked =
-      DEFAULT_SPEECH_SETTINGS.speechEnabled;
-    this.voiceSelect.value = DEFAULT_SPEECH_SETTINGS.speechVoiceId;
-    for (const name of [
-      'speechLanguage',
-      'speechRate',
-      'speechPitch',
-      'speechVolume',
-    ] as const) {
-      requiredElement<HTMLInputElement>(this.form, '[name="' + name + '"]').value =
-        String(DEFAULT_SPEECH_SETTINGS[name]);
-    }
+    this.writeFields(DEFAULT_SPEECH_SETTINGS);
     this.updateSpeechControls();
   }
 
@@ -537,10 +532,7 @@ export class SettingsPanel {
   }
 
   private resetColorSettings(): void {
-    for (const [name, value] of Object.entries(DEFAULT_COLOR_SETTINGS)) {
-      requiredElement<HTMLInputElement>(this.form, '[name="' + name + '"]').value =
-        String(value);
-    }
+    this.writeFields(DEFAULT_COLOR_SETTINGS);
     this.updateColorOutputs();
     const parsed = this.parseForm();
     if (parsed.success) void this.preview(parsed.data);

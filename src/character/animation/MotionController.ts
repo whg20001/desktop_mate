@@ -105,6 +105,11 @@ export class MotionController {
   }
 
   setSpeechFrame(frame: SpeechMotionFrame): void {
+    if (!frame.active) {
+      this.talkingRemaining = 0;
+      this.mouthWeight = 0;
+      MOUTH_MORPHS.forEach((morph) => this.runtime.setMorph(morph, 0));
+    }
     this.speechFrame = {
       active: frame.active,
       level: THREE.MathUtils.clamp(frame.level, 0, 1),
@@ -256,8 +261,8 @@ export class MotionController {
     this.applyRotation(this.rightArm, 'z', rightArmZ, smoothing);
     this.applyRotation(this.rightHand, 'z', rightHandZ, smoothing);
 
-    const activeMouth = this.speechFrame.active && this.speechFrame.viseme
-      ? MOUTH_MORPHS.indexOf(this.speechFrame.viseme)
+    const activeMouth = this.speechFrame.active
+      ? MOUTH_MORPHS.indexOf(this.speechFrame.viseme ?? 'a')
       : Math.floor(this.elapsed * 7) % MOUTH_MORPHS.length;
     MOUTH_MORPHS.forEach((morph, index) => {
       this.runtime.setMorph(morph, talking && index === activeMouth ? this.mouthWeight : 0);

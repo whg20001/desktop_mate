@@ -30,6 +30,7 @@ export interface SpeechEngineObserver {
 }
 
 export interface SpeechEngine {
+  dispose?(): void;
   speak(
     utterance: SpeechUtterance,
     observer: SpeechEngineObserver,

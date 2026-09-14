@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "audio-models",
+  "description": "Settings owns TTS model selection.",
+  "windows": ["settings"],
+  "permissions": ["audio-model-management"]
+}

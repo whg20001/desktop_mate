@@ -82,6 +82,7 @@ export class SpeechController {
 
   dispose(): void {
     this.cancel();
+    this.engine.dispose?.();
     this.listeners.clear();
   }
 

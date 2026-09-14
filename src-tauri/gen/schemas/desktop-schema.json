@@ -177,6 +177,30 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Switch the owned TTS model from the settings window.",
+          "type": "string",
+          "const": "audio-model-management",
+          "markdownDescription": "Switch the owned TTS model from the settings window."
+        },
+        {
+          "description": "Own native speech sessions in the character window.",
+          "type": "string",
+          "const": "audio-playback",
+          "markdownDescription": "Own native speech sessions in the character window."
+        },
+        {
+          "description": "Inspect installed voices and audio status.",
+          "type": "string",
+          "const": "audio-read",
+          "markdownDescription": "Inspect installed voices and audio status."
+        },
+        {
+          "description": "Existing desktop and brain commands used by the two app windows.",
+          "type": "string",
+          "const": "existing-app-commands",
+          "markdownDescription": "Existing desktop and brain commands used by the two app windows."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

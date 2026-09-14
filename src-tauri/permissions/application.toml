@@ -1,0 +1,19 @@
+[[permission]]
+identifier = "existing-app-commands"
+description = "Existing desktop and brain commands used by the two app windows."
+commands.allow = ["begin_drag", "end_drag", "update_hit_regions", "get_desktop_world", "get_brain_status", "get_brain_settings", "configure_brain", "converse", "list_brain_memories", "update_brain_memory", "delete_brain_memory", "get_memory_status", "retry_brain_memory", "approve_brain_memory", "reject_brain_memory", "rebuild_brain_memory"]
+
+[[permission]]
+identifier = "audio-read"
+description = "Inspect installed voices and audio status."
+commands.allow = ["list_audio_voices", "get_audio_status", "get_audio_models"]
+
+[[permission]]
+identifier = "audio-playback"
+description = "Own native speech sessions in the character window."
+commands.allow = ["open_audio_session", "start_audio", "cancel_audio"]
+
+[[permission]]
+identifier = "audio-model-management"
+description = "Switch the owned TTS model from the settings window."
+commands.allow = ["select_audio_model"]

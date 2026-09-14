@@ -8,6 +8,12 @@
 
 ---
 
+## 阅读说明：当前实现与目标设计
+
+本文同时保留开发教程、目标架构和历史阶段路线图，代码示例与推荐目录不等于当前仓库已经实现的 API。当前模块映射见第 9 节；可运行语音链路见 [语音模块架构](../docs/voice-architecture.md)，下一阶段方案见 [AudioEngine 实施方案](../docs/audio-engine-plan.md)。
+
+当前应用组合入口是 `src/app/bootstrap.ts`；`CompanionOrchestrator` 是目标职责名称，尚无独立同名类。Brain 的会话、LLM 和长期记忆在 Python Sidecar 中，Rust 负责宿主、配置、安全 IPC 与二次校验。当前 AudioEngine 已接通 SpeechController / TauriSpeechEngine、Rust AudioRuntime / WindowsTtsProvider / rodio 播放与真实 RMS；WebSpeechEngine 仅用于浏览器预览，SFX、STT 与视觉实现仍待完成。
+
 # 1. 产品目标
 
 最终用户启动程序之后，不应该看到：
@@ -119,7 +125,7 @@ Vision
 
 Three.js 在 r170 已经将原来的 MMD 模块标记为 deprecated，因此项目不要把旧版 Three.js `MMDLoader` 直接写死在业务代码里。现在推荐把 MMD 放在独立 `MmdRuntime` 抽象层。目前 `@moeru/three-mmd` 仍在维护，并提供 PMX/MMD runtime、动画、toon material 以及独立 Ammo 物理插件。
 
-同样的抽象原则也适用于 BrainEngine 与 AudioEngine：当前对话业务只依赖 `LocalLlmProvider` / `MemoryPort`，不直接依赖 Mem0 内部对象；AudioEngine 依赖 `TtsProvider` 等稳定 port。跨 Engine 的工作流由 CompanionOrchestrator 组合；动作建议统一经过 BehaviorPlanner。详见“AI Layer”“Memory Interface”“Vision Interface”和“AudioEngine Architecture”章节。
+同样的抽象原则也适用于 BrainEngine 与 AudioEngine：当前对话业务只依赖 `LocalLlmProvider` / `MemoryPort`，不直接依赖 Mem0 内部对象；AudioEngine 目标实现依赖 `TtsProvider` 等稳定 port，当前由 `TauriSpeechEngine` 接通 Windows 原生播放。跨 Engine 的工作流目前由 `bootstrap.ts` 组合，`CompanionOrchestrator` 是后续拆分名称；动作建议统一经过 BehaviorPlanner。详见“AI Layer”“Memory Interface”“Vision Interface”和“AudioEngine Architecture”章节。
 
 ---
 
@@ -518,7 +524,7 @@ src/character/mmd/
 
 # 9. 推荐项目目录
 
-目录按职责域组织；`app/` 只负责组合，Engine 之间通过 `behavior/`、`audio/` 和 `ipc/` 中的稳定契约通信。
+下列是目标目录，不是当前文件清单。目录按职责域组织；`app/` 只负责组合。当前语音契约在 `speech/`，图中的 `audio/`、`orchestration/`、`storage/` 和部分文件尚未创建；按实际消费者渐进增加。
 
 ```text
 desktop-companion/
@@ -558,7 +564,7 @@ desktop-companion/
 │   │
 │   ├── audio/                         // AudioEngine 的播放侧
 │   │   ├── AudioTypes.ts
-│   │   ├── AudioController.ts         // 播放、打断与统一生命周期
+│   │   ├── TauriSpeechEngine.ts       // 原生 IPC 适配；复用现有 SpeechController
 │   │   ├── speech/
 │   │   │   ├── SpeechController.ts
 │   │   │   └── WebSpeechEngine.ts     // 无密钥调试适配器
@@ -655,7 +661,7 @@ desktop-companion/
 └── pnpm-lock.yaml
 ```
 
-当前代码可以渐进迁移，不要求一次性移动所有文件。例如现有 `src/speech/` 可先作为 `AudioEngine` 的语音子模块，现有 Rust `ai/`、`memory/`、`vision/`、`speech/` 可以先由 facade 组合，再在稳定后调整物理目录。
+当前代码可以渐进迁移，不要求一次性移动所有文件。例如现有 `src/speech/` 可先作为 `AudioEngine` 的语音子模块，现有 Rust `brain/`、`vision/`、`speech/` 可以先由 facade 组合；会话和记忆业务继续留在 Python `brain-sidecar/`，不新增 Rust `ai/` 或 `memory/` 副本，在稳定后调整物理目录。
 
 目录依赖规则：
 
@@ -678,11 +684,11 @@ ipc           不依赖具体 Engine 实现
 | `src/character/CharacterRuntime.ts` | CharacterEngine facade | 后续只接收 `BehaviorIntent`、视觉设置和 `LipSyncFrame` |
 | `BehaviorPlanner.ts` + `BehaviorPolicy.ts` + `BehaviorScheduler.ts` | 行为准入与调度边界 | Planner 归一化外部建议，Policy 校验来源与 allow-list，Scheduler 负责物理抢占、排队、冷却和恢复 |
 | `MotionController.ts` + `MotionCatalog.ts` | 动作执行与动作目录 | 保持模型实现细节，不接收 AgentResponse 原始 JSON |
-| `src/speech/SpeechController.ts` | AudioEngine 语音原型 | 逐步由 `AudioController` 统一 TTS、SFX、打断和播放会话 |
+| `src/speech/SpeechController.ts` | AudioEngine 前端请求控制 | 保留前端请求控制；TauriSpeechEngine 对接 Rust AudioRuntime，原生侧统一播放资源 |
 | Rust `brain/` + Python `brain-sidecar/` | BrainEngine | Rust 管生命周期、安全 IPC 和二次校验；Python 管对话、本地 LLM、会话、MemoryPolicy 与 Provider；不维护第二套 Rust 记忆事实源 |
 | Python `MemoryPort` / `MemoryManager` | 长期记忆边界 | SQLite 为事实源；隔离并编排 Mem0 与可选 Graphiti，支持独立降级和重建 |
 | Rust `vision/` | 可选 Vision 契约 | 默认关闭，等待明确授权的视觉功能 |
-| Rust `speech/provider.rs` | AudioEngine Provider 契约 | 增加 Provider Manager、受控播放和 RMS/Viseme 输出 |
+| Rust `speech/` | AudioEngine 原生实现 | WindowsTtsProvider、AudioRuntime、播放与 RMS 已接通；SFX / STT / Viseme 后续扩展 |
 
 当前 Phase I 与 Phase II 记忆主链已实现：
 
@@ -691,7 +697,7 @@ BehaviorTypes
 BehaviorPlanner
 BehaviorPolicy / BehaviorScheduler
 BrainBridge / ConversationOrchestrator
-Speech Bubble / 情绪 / Web Speech TTS 联动
+Speech Bubble / 情绪 / Windows 原生 TTS 联动
 Rust BrainSupervisor / BrainClient
 Python LocalLlmProvider / SQLite Conversation Session
 Mem0 + SQLite history + embedded Qdrant
@@ -701,7 +707,7 @@ MemoryPolicy / 审批 / Provider outbox / 融合召回
 鉴权、readiness、自动关闭、崩溃检测与退避重启
 ```
 
-后续仍需完成原生 AudioEngine 播放实现、STT、Conversation UI 增强，以及由用户配置的真实本机 Neo4j 与真实本地模型上的 Graphiti 集成验收。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
+AudioEngine 原生播放与 RMS 已完成，后续仍需 SFX、STT、设备拔插/声学延迟验收、Conversation UI 增强，以及由用户配置的真实本机 Neo4j 与真实本地模型上的 Graphiti 集成验收。迁移时先增加 facade 和契约，再移动目录；不要把“大规模改路径”与“改变运行行为”放在同一个提交中。
 
 ---
 # 10. Tauri Character Window
@@ -2511,7 +2517,7 @@ VMD 导入流程必须包含：
 
 # 52. AudioEngine Architecture
 
-AudioEngine 是独立职责域，但不直接控制 CharacterEngine。目标数据流：
+AudioEngine 是独立职责域，但不直接控制 CharacterEngine。本节为目标设计；当前实现见 [语音模块架构](../docs/voice-architecture.md)，原生播放、会话取消及口型同步的落地选择见 [AudioEngine 实施方案](../docs/audio-engine-plan.md)。首版沿用 SpeechController，Rust AudioRuntime 承担原生 AudioController 职责。目标数据流：
 
 ```text
 User / System / BrainEngine
@@ -2539,25 +2545,16 @@ User / System / BrainEngine
 
 | 组件 | 职责 |
 |---|---|
-| `TtsProvider` | 文本合成音频和可选 VisemeCue，不管理角色 |
+| `TtsProvider` | 当前将文本合成为 WAV 字节；音素时间戳留待后续实现，不管理角色 |
 | `SttProvider` | 用户显式授权后的语音识别，不生成动作 |
 | `AudioController` | 播放、取消、打断、音量组与活动会话所有权 |
 | `SfxController` | 短音效、分类音量和并发限制 |
 | `LipSyncAnalyzer` | 从 RMS 或音素时间戳生成标准嘴型帧 |
 | `CharacterEngine` | 消费 LipSyncFrame 并应用 PMX Morph |
 
-稳定事件：
+已实现的 IPC 使用单一 `audio://event` 主题；`type` 字段区分 preparing、started、frame、completed、cancelled、failed。事件携带 sessionId、generation、sequence 与 eventSequence，前端丢弃旧会话及乱序帧。
 
-```text
-audio://preparing
-audio://started
-audio://frame
-audio://completed
-audio://cancelled
-audio://failed
-```
-
-`audio://frame` 只携带归一化音量、可选 viseme 和时间戳，不携带 PMX Morph 名称。角色模型自己的 MorphMap 负责最终映射。
+frame 类型只携带归一化音量、可选 viseme 和播放位置，不携带 PMX Morph 名称。角色模型自己的 MorphMap 负责最终映射。
 
 BrainEngine 只能产生 `speech` 文本或语音意图；它不能指定扬声器设备、直接播放字节、改变系统音量或伪造播放完成事件。
 
@@ -2580,7 +2577,7 @@ Mouth Open Morph
 第二阶段：
 
 ```text
-TTS VisemeCue / phoneme timestamps
+TTS phoneme timestamps（后续接入）
        ↓
 A / I / U / E / O
        ↓
@@ -2660,7 +2657,7 @@ idle animation = happy idle
 ---
 # 55. AI Layer
 
-AI 一定是最后接入运行时，但 **接口必须从项目一开始就抽象好**，否则后续更换模型、更换记忆框架、增加视觉能力时都会牵动 Character Runtime。
+AI 文本对话、记忆召回及语音联动已经接入。后续替换本机模型、记忆框架或增加视觉能力时，继续保持 Character Runtime 与 Provider 实现隔离。
 
 ## 核心原则：WebView 永远不直接对话 LLM
 
@@ -2672,47 +2669,37 @@ Frontend（Three.js / TypeScript）**不允许**持有 API Key，也**不允许*
 
 当前版本采用统一的本地边界：对话 LLM、记忆提取 LLM 与 Embedding API 都只能使用经过双端校验的 HTTP loopback 地址，不定义、注册或启用远程 LLM Provider，也不存在本地模型失败后的云端 fallback。若未来改变该政策，必须单独进行隐私设计和用户授权评审。
 
-最终数据流：
+当前数据流：
 
 ```text
-Frontend（对话输入 / 文本气泡）
-      │  invoke("converse")
-      ▼
-Rust: BrainSupervisor / BrainClient
-      ├─ 临时令牌与 loopback IPC
-      ├─ 请求 DTO 校验
-      └─ AvailableAction[]             ← 当前允许 AI 建议的动作摘要
-      │
-      ▼
-Python: ConversationOrchestrator
-      ├─ SQLite SessionStore.get_recent()
-      ├─ Local Mem0.search()
+ConversationPanel → BrainBridge（构建 AvailableAction[]）
+      ↓ invoke("converse")
+Rust BrainSupervisor / BrainClient（鉴权、请求与响应校验）
+      ↓ loopback HTTP
+Python ConversationOrchestrator
+      ├─ ConversationSessionStore.recent()
+      ├─ MemoryPort.search() → MemoryManager / DisabledMemory
       └─ LocalLlmProvider.complete()
-      │
-      ▼
-AgentResponse（仍是不可信模型输出）
-      │
-      ▼
-Schema / Safety / Range Validation
-      │
-      ▼
-CharacterResponse
-      ├─ speech ──────────────────────► AudioEngine
-      ├─ behaviorProposal ────────────► BehaviorPlanner
-      ├─ emotionProposal ─────────────► BehaviorPlanner
-      └─ 本轮对话 ────────────────────► SQLite commit + Memory outbox
-                                               │
-                                               ▼
-                                      Local Mem0 remember_turn()
+      ↓ 不可信模型 JSON
+Python Schema / Range Validation → CharacterResponse
+      ↓ 原子提交回复与 pending extraction 标记，再返回
+Rust 二次校验 → 前端 Zod 校验 → bootstrap.ts
+      ├─ text → SpeechBubble
+      ├─ speech.text → SpeechController / TauriSpeechEngine / Rust AudioRuntime
+      └─ actionIntent / emotion → BehaviorPlanner → CharacterRuntime
 
-BehaviorPlanner ── BehaviorIntent ───► CharacterEngine / DesktopEngine
+后台 MemoryManager worker（不等待下一条用户消息）
+      ↓ 消费 pending turn、提取与策略审核
+MemoryEventStore（SQLite 事实源、receipt、Provider outbox）
+      ↓
+Mem0 / 可选 Graphiti 派生索引
 ```
 
 `AvailableAction[]` 只包含动作 ID、描述和场景标签，来源于 MotionCatalog 与用户配置。它不包含本地文件路径、VMD 文件名、骨骼名称或 Morph 参数。这样 AI 能根据场景选择动作，但无法越过动作目录和执行策略。
 
 ## LocalLlmProvider：当前本机模型入口
 
-Phase I 只有一个生产实现：Python `LocalLlmProvider`。它调用本机 `/v1/chat/completions`，不需要为单一实现维护 Rust trait、注册表或热切换状态。
+当前本机 LLM 只有一个生产实现：Python `LocalLlmProvider`。它调用本机 `/v1/chat/completions`，不需要为单一实现维护 Rust trait、注册表或热切换状态。
 
 ```python
 def complete(
@@ -2734,15 +2721,16 @@ Rust IPC 的 `ConversationPayload` 和 `CharacterResponse` 是跨进程稳定契
 
 ```json
 {
-  "speech": "你回来啦。",
+  "text": "你回来啦。",
+  "speech": { "text": "你回来啦。" },
   "emotion": {
     "type": "happy",
-    "intensity": 0.8
+    "intensity": 0.8,
+    "durationMs": 2000
   },
-  "behavior": {
-    "actionId": "greeting",
-    "intensity": 0.7,
-    "reason": "用户刚刚回到桌面"
+  "actionIntent": {
+    "id": "greeting",
+    "intensity": 0.7
   }
 }
 ```
@@ -2757,7 +2745,7 @@ ConversationOrchestrator → 只能传入本机会话和 MemoryPort 召回的上
 
 当前没有远程或无记忆云端模式；所有对话请求都通过本机 LocalLlmProvider 执行。
 
-上面的 `behavior` 只是 `BehaviorProposal`。BehaviorPlanner 必须再次检查 MotionCatalog、用户启用项、当前物理状态、优先级与冷却时间，批准后才生成 `BehaviorIntent`。
+上面的 `actionIntent` 是未获执行权的动作建议；Python 校验后补充 turnId 等响应字段。BehaviorPlanner / BehaviorPolicy 检查 MotionCatalog、来源与用户启用项并生成 `BehaviorIntent`，BehaviorScheduler 再处理物理状态、优先级、抢占和冷却。
 
 当前 Phase II 由 `MemoryManager.remember_turn` 调用本地候选提取与 `MemoryPolicy`，再将批准事件写入 SQLite 并异步投递 Mem0/Graphiti。Mem0 的 LLM 和 Embedding 均显式绑定本机 API；ConversationOrchestrator 只依赖 `MemoryPort`，不直接依赖 Provider SDK。
 
@@ -2962,21 +2950,23 @@ Conversation Turn / System Semantic Event
 
 ```text
 对话开始前：
-  1. SessionStore.get_recent(scope, N)
-  2. MemoryPort.search(query)
+  1. ConversationSessionStore.recent(scope, N)
+  2. MemoryPort.search(query, scope, limit)
   3. ConversationOrchestrator 将最近会话与召回结果传给 LocalLlmProvider
 
 对话结束后：
   1. ConversationSessionStore 原子提交 user / assistant / CharacterResponse
   2. 同一事务创建 memory outbox 状态
-  3. MemoryManager.remember_turn() 使用本地 LLM 生成候选并经过 MemoryPolicy
+  3. 提交成功即返回回复；后台 MemoryManager worker 消费待提取 turn，再调用 remember_turn() 生成候选并经过 MemoryPolicy
   4. 候选写入 SQLite；批准项分别排队同步 Mem0 / Graphiti
   5. Provider 成功后按 event revision 完成投递；失败则指数退避并保留待重试状态
 ```
 
 Mem0 或 Graphiti 不可用时，对话仍依靠 Session Memory 与 SQLite 事实源工作；长期写入进入本地待处理队列并采用有上限的指数退避，不阻塞角色渲染、动作播放或应用退出。Graphiti 的初始化在独立 asyncio 线程中进行，不能占用 Sidecar readiness 的启动窗口。
 
-## Mem0 接入策略（Phase I）
+## Mem0 接入策略（Phase I 历史基础链）
+
+下图用于说明最初的接口边界。当前 Phase II 由 MemoryManager 统筹 SQLite 事实源及 Mem0/Graphiti 派生索引；会话与 Provider outbox 不属于 Mem0 私有历史库。
 
 Mem0 的 Python 实现必须在本机受控 Sidecar 中运行，由 Rust `BrainClient` 通过 loopback 调用，不把 Python 解释器嵌入 Character WebView：
 
@@ -2990,10 +2980,10 @@ Python Brain Sidecar / ConversationOrchestrator
 Local Mem0
       ├─ Local embedding model
       ├─ Qdrant embedded local mode
-      └─ SQLite history / conversation / outbox
+      └─ SQLite history（仅 Mem0 历史；会话与 outbox 由 Sidecar 自有存储管理）
 ```
 
-Mem0 sidecar 必须绑定 loopback、使用随机会话凭据、由 Tauri 生命周期统一启动和关闭，并提供健康检查与版本兼容检查。配置中不提供 Mem0 Cloud、远程 `base_url` 或远程 API Key；检测到非本机地址时配置保存和启动都必须失败。启动检查还必须验证 Mem0 内部配置的 LLM、embedding 与 vector store 均为本机实现，不能只检查 Rust 到 Mem0 的第一跳。
+承载 Mem0 适配器的 Python Brain Sidecar 必须绑定 loopback、使用随机会话凭据、由 Tauri 生命周期统一启动和关闭，并提供健康检查与版本兼容检查。配置中不提供 Mem0 Cloud、远程 `base_url` 或远程 API Key；检测到非本机地址时配置保存和启动都必须失败。启动检查还必须验证 Mem0 内部配置的 LLM、embedding 与 vector store 均为本机实现，不能只检查 Rust 到 Mem0 的第一跳。
 
 Phase I 不需要 Docker。当前实现使用 SQLite 加 Qdrant embedded local mode；Rust Host 每次启动生成 64 位十六进制临时令牌和随机回环端口，Python Sidecar 只监听 `127.0.0.1`。Rust 与 Python 两侧都拒绝非 loopback LLM/Embedding URL，并禁用系统代理、HTTP 重定向、Mem0 遥测以及任何默认云端 Provider。所有会话、向量、历史、outbox 与日志只能写入 Tauri app local data 下的 `brain/` 目录。
 
@@ -3133,7 +3123,7 @@ VisionProvider.describe()
 默认关闭
 
 用户必须在设置里显式打开："允许桌宠观察屏幕"
-   独立于"允许桌宠联网使用 AI"这个开关
+   使用独立视觉权限；当前不存在远程 AI 联网开关
 
 每一次实际截屏都必须有可感知的提示
    （例如角色出现"观察"动作 / 系统托盘图标短暂变化）
@@ -3147,6 +3137,8 @@ VisionProvider.describe()
 
 ## 目录与配置
 
+下列为目标目录；当前只有 `mod.rs` 和 `provider.rs`，截图及 Provider 实现均未接入。
+
 ```text
 src-tauri/src/vision/
 ├── mod.rs
@@ -3158,7 +3150,7 @@ src-tauri/src/vision/
     └── local_multimodal.rs  // 未来本机多模态实现
 ```
 
-对应 Tauri command（先定义，Phase 10 之后再实现）：
+未来出现真实视觉消费者时才增加的候选 Tauri command（当前未注册，不预建空命令）：
 
 ```text
 set_vision_enabled(bool)
@@ -3225,8 +3217,9 @@ AI 对话、记忆、视觉三者可以使用不同实现，但记忆始终留�
 ```text
 普通 Chat         → LocalLlmProvider
 记忆感知 Chat     → LocalLlmProvider
-记忆提取 LLM      → Mem0 中显式配置的本地 LLM
-Memory            → 本地 SessionStore + 本地 Mem0Provider
+记忆提取 LLM      → LocalMemoryInferenceProvider（本机）
+Memory            → ConversationSessionStore + MemoryEventStore + MemoryManager
+派生索引          → Mem0 + 可选 Graphiti
 Vision            → 独立权限控制
 ```
 
@@ -3257,7 +3250,7 @@ Window HWND / 任意桌面坐标写入
 ExecutePowerShell / DeleteFile
 ClickAnything / MoveMouse
 绕过 MotionCatalog 的动作 ID
-伪造 audio://completed 等生命周期事件
+伪造 audio://event 的 completed 等生命周期事件
 ```
 
 这不是禁止 AI 选择动作，而是把选择权限制在稳定的语义动作目录内：
@@ -3627,11 +3620,11 @@ LLM API Key
 
 ---
 
-# 70. 第一阶段不要做的东西
+# 70. 初始 MVP 的历史范围
 
-先明确禁止范围。
+以下仅记录最初桌面渲染 MVP 的实施边界，不是当前开发禁令。LLM、长期记忆、设置页与 Windows 原生语音现已实现；STT、视觉、角色导入等仍按后续需求推进。
 
-暂时不要做（实现层面）：
+当时暂缓的实现：
 
 ```text
 LLM
@@ -3901,11 +3894,13 @@ Name
 
 # 80. Phase 9：AudioEngine
 
-完成：
+当前已完成 SpeechController / TauriSpeechEngine / Rust AudioRuntime、Windows 原生语音、取消与真实 RMS 口型。以下是完整目标清单，SFX、STT 与音素时间戳尚未实现；执行计划见 [AudioEngine 实施方案](../docs/audio-engine-plan.md)。
+
+目标交付：
 
 ```text
 AudioController
-TTS Provider 或本地调试 Engine
+WindowsTtsProvider + 原生 Playback（浏览器预览保留 WebSpeechEngine）
 SFX Controller 基础接口
 播放 / 取消 / 打断
 AudioEvent
@@ -3946,7 +3941,7 @@ BrainSupervisor 自动启动 / readiness / 自动关闭
 SQLite memory outbox / turnId 幂等恢复
 ```
 
-当前阶段必须按依赖顺序实现和验收，不能跳过前置层：
+以下是已实现基础链的依赖顺序和回归验收范围：
 
 ```text
 1. 生命周期管理
@@ -4179,11 +4174,13 @@ Recent messages + memories → LocalLlmProvider
                     │
                     ▼
              CharacterResponse
-                    │
-       ┌────────────┴─────────────┐
-       ▼                          ▼
-ConversationSessionStore   MemoryPort.remember_turn()
-commit + outbox                  Local Mem0
+                    ↓
+ConversationSessionStore 原子 commit + pending extraction
+                    ├─ 返回回复（不等待提取）
+                    ↓ 后台 worker
+MemoryManager.remember_turn() → MemoryPolicy
+                    ↓
+MemoryEventStore + Provider outbox → Mem0 / 可选 Graphiti
 ```
 
 ConversationSessionStore 保存原始会话与对话写入 outbox；当前 Phase II 的 canonical MemoryEventStore 保存批准事件与 Provider outbox，MemoryManager 聚合本机 Mem0 和可选 Graphiti。记忆检索可以影响本地 Agent 的回答、情绪与动作建议，但动作仍必须走 `BehaviorProposal → BehaviorPlanner → BehaviorIntent`。当前对话链路不允许定义或注册远程 LLM Provider。
@@ -4423,9 +4420,9 @@ BrainEngine
 
 ---
 
-# 87. 第二版目标
+# 87. 第二版目标（历史路线图）
 
-MVP 后：
+以下为原始规划；Speech Bubble、原生 TTS、RMS LipSync、Emotion 与本机 LLM 已有实现。VMD 动作库、Walking、Sitting、Sleeping 等尚待具体需求和验收：
 
 ```text
 VMD Motion Library
@@ -4443,9 +4440,9 @@ LLM
 
 ---
 
-# 88. 第三版目标
+# 88. 第三版目标（历史路线图）
 
-再加入：
+原计划中的 Long-term Memory 已提前实现；Graphiti 真机集成验收仍待完成。其余内容为目标能力，不能视为当前已交付：
 
 ```text
 UI Automation
@@ -4472,7 +4469,7 @@ Character Importer
        ┌──────────────┬──────────────┬──────────────┐
        ▼              ▼              ▼              ▼
 DesktopEngine  CharacterEngine  AudioEngine    BrainEngine
-    Rust          Three.js         Rust           Rust
+    Rust          Three.js       Rust/TS     Rust Host + Python
 Windows/UIA      PMX/Motion      TTS/SFX       Agent/Memory
 Physics/Window   Morph/Render    LipSync        BehaviorProposal
        │              ▲              │              │
@@ -4490,7 +4487,7 @@ Physics/Window   Morph/Render    LipSync        BehaviorProposal
 ```text
 PMX → VRM
 Three.js → 其他 Renderer
-Web Speech → 原生/云端 TTS
+Web Speech → Windows 原生 TTS / Qwen3 本机模型 TTS
 LocalLlmProvider → 未来其他本机 LLM 实现
 Mem0Memory → 未来其他本机长期记忆实现
 本机 Graphiti → 未来其他本机 Temporal Graph 实现
@@ -4517,9 +4514,9 @@ BrainEngine 内部的 AI、Memory、Vision 分别通过稳定 port 插拔；Audi
 ```
 
 ---
-# 90. 当前技术决策总结
+# 90. 当前技术决策与目标边界
 
-本项目第一版正式采用：
+当前桌面宿主及渲染采用下列技术栈，另有 Python Brain Sidecar 承担对话与记忆：
 
 ```text
 Tauri 2
@@ -4595,20 +4592,19 @@ Windows 感知：
 EnumWindows
 +
 DwmGetWindowAttribute
-+
-SetWinEventHook
+目标扩展：SetWinEventHook（当前窗口枚举仍为轮询）
 ```
 
-UI 感知：
+UI 感知（目标，当前未接入）：
 
 ```text
 Windows UI Automation
 ```
 
-应用编排：
+应用编排（当前 bootstrap.ts，目标拆为独立 CompanionOrchestrator）：
 
 ```text
-CompanionOrchestrator 作为 Composition Root
+bootstrap.ts 作为当前 Composition Root
 +
 只负责生命周期、事件路由和跨 Engine 工作流
 +
@@ -4627,7 +4623,7 @@ System Physical > User > Audio > AI > Idle
 AI 只能从用户启用的 allow-list 建议动作
 ```
 
-AudioEngine：
+AudioEngine（Windows / Qwen3 TTS、Playback、RMS 已实现；SFX 待完善，STT 仅保留接口）：
 
 ```text
 TtsProvider / SttProvider

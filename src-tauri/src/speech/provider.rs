@@ -11,16 +11,6 @@ pub enum AudioEncoding {
     OggOpus,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SpeechViseme {
-    A,
-    I,
-    U,
-    E,
-    O,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechAudio {
@@ -39,21 +29,6 @@ pub struct SpeechSynthesisRequest {
     pub rate: Option<f32>,
     pub pitch: Option<f32>,
     pub volume: Option<f32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VisemeCue {
-    pub offset_ms: u64,
-    pub duration_ms: u64,
-    pub viseme: SpeechViseme,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SynthesizedSpeech {
-    pub audio: SpeechAudio,
-    pub visemes: Vec<VisemeCue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,13 +55,50 @@ pub enum SpeechError {
     Provider(String),
 }
 
-#[async_trait]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTimings {
+    #[serde(default)]
+    pub service_queue_ms: f64,
+    #[serde(default)]
+    pub model_ms: f64,
+    #[serde(default)]
+    pub codec_decode_ms: f64,
+    pub first_chunk_ms: Option<f64>,
+}
+pub struct AudioChunk {
+    pub wav: Vec<u8>,
+    pub timings: ProviderTimings,
+}
+
 pub trait TtsProvider: Send + Sync {
-    fn id(&self) -> &str;
-    async fn synthesize(
+    /// Returns complete WAV bytes; playback reads format metadata from the header.
+    fn synthesize(
         &self,
-        request: SpeechSynthesisRequest,
-    ) -> Result<SynthesizedSpeech, SpeechError>;
+        request: &SpeechSynthesisRequest,
+        cancel: &super::model::Cancellation,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<u8>, super::model::AudioError>;
+
+    fn stream(
+        &self,
+        request: &SpeechSynthesisRequest,
+        cancel: &super::model::Cancellation,
+        deadline: std::time::Instant,
+        chunk: &mut dyn FnMut(AudioChunk) -> Result<(), super::model::AudioError>,
+    ) -> Result<ProviderTimings, super::model::AudioError> {
+        let start = std::time::Instant::now();
+        let wav = self.synthesize(request, cancel, deadline)?;
+        let timings = ProviderTimings {
+            model_ms: start.elapsed().as_secs_f64() * 1000.0,
+            ..Default::default()
+        };
+        chunk(AudioChunk {
+            wav,
+            timings: timings.clone(),
+        })?;
+        Ok(timings)
+    }
 }
 
 #[async_trait]

@@ -822,3 +822,9 @@ body.settings-window {
   color: #964f5c;
   border-color: #e2bec6;
 }
+
+.runtime-status { display: grid; gap: 6px; max-width: 48%; text-align: right; }
+.runtime-status small { font-size: 11px; color: #737680; overflow-wrap: anywhere; }
+.audio-model-controls select { width: 100%; }
+[data-audio-model-status] { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+[data-audio-model-status][data-kind="failed"] { color: #b84444; }
